@@ -59,6 +59,12 @@ function Navbar() {
           >
             Register
           </Link>
+          {/*<Link
+          to="/dashboard"
+          className="hover:text-blue-600 transition"
+>
+          Dashboard
+        </Link>*/}
 
         </div>
 
