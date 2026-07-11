@@ -1,10 +1,22 @@
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+import Navbar from "./components/Navbar";
+
+import Home from "./pages/Home";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+
 function App() {
   return (
-    <div className="min-h-screen bg-slate-100 flex items-center justify-center">
-      <h1 className="text-5xl font-bold text-blue-600">
-        Virtual Stock Trading Platform
-      </h1>
-    </div>
+    <BrowserRouter>
+      <Navbar />
+
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
 
