@@ -8,14 +8,14 @@ function Login() {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
 
-  const handleLogin = () => {
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+
     let valid = true;
 
-    // Clear previous errors
     setEmailError("");
     setPasswordError("");
 
-    // Email validation
     if (email.trim() === "") {
       setEmailError("Email is required");
       valid = false;
@@ -24,7 +24,6 @@ function Login() {
       valid = false;
     }
 
-    // Password validation
     if (password.trim() === "") {
       setPasswordError("Password is required");
       valid = false;
@@ -33,24 +32,24 @@ function Login() {
       valid = false;
     }
 
-    // If everything is valid
     if (valid) {
       console.log("Email:", email);
       console.log("Password:", password);
 
-      alert("Login Successful! (Backend will be connected later)");
+      alert("Login Successful! Backend will be connected later.");
     }
   };
 
   return (
     <div className="min-h-screen flex justify-center items-center bg-slate-100">
       <div className="bg-white shadow-xl rounded-xl p-10 w-full max-w-md">
+
         <h1 className="text-3xl font-bold text-center mb-8">
           Login
         </h1>
 
-        <div className="space-y-5">
-          {/* Email */}
+        <form onSubmit={handleLogin} className="space-y-5">
+
           <div>
             <input
               type="email"
@@ -67,7 +66,6 @@ function Login() {
             )}
           </div>
 
-          {/* Password */}
           <div>
             <input
               type="password"
@@ -86,9 +84,11 @@ function Login() {
 
           <Button
             text="Login"
-            onClick={handleLogin}
+            type="submit"
           />
-        </div>
+
+        </form>
+
       </div>
     </div>
   );
