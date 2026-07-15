@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Outlet } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import Navbar from "./components/layout/Navbar";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -19,10 +20,13 @@ function Layout() {
   );
 }
 
+const queryClient = new QueryClient();
+
 function App() {
   return (
-    <BrowserRouter>
-      <Routes>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <Routes>
         {/* Public pages with standard Navbar */}
         <Route element={<Layout />}>
           <Route path="/" element={<Home />} />
@@ -41,6 +45,7 @@ function App() {
         />
       </Routes>
     </BrowserRouter>
+    </QueryClientProvider>
   );
 }
 

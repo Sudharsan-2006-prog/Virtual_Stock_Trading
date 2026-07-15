@@ -1,0 +1,34 @@
+package com.virtualstock.backend.controller;
+
+import com.virtualstock.backend.entity.Transaction;
+import com.virtualstock.backend.entity.User;
+import com.virtualstock.backend.repository.TransactionRepository;
+import com.virtualstock.backend.service.UserService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/transactions")
+public class TransactionController {
+
+    @Autowired
+    private TransactionRepository transactionRepository;
+
+    @Autowired
+    private UserService userService;
+
+    @GetMapping
+    public ResponseEntity<List<Transaction>> getTransactions(Authentication authentication) {
+        String email = authentication.getName();
+        User user = userService.getUserByEmail(email);
+
+        List<Transaction> transactions = transactionRepository.findByUserOrderByTimestampDesc(user);
+        return ResponseEntity.ok(transactions);
+    }
+}

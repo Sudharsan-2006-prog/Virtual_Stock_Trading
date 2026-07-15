@@ -32,6 +32,7 @@ public class UserService {
         user.setFullName(request.getFullName());
         user.setEmail(request.getEmail());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
+        user.setWalletBalance(new java.math.BigDecimal("100000.00"));
 
         User savedUser = userRepository.save(user);
         String token = jwtTokenProvider.generateToken(savedUser.getEmail());

@@ -2,6 +2,8 @@ package com.virtualstock.backend.entity;
 
 import jakarta.persistence.*;
 
+import java.math.BigDecimal;
+
 @Entity
 @Table(name = "users")
 public class User {
@@ -16,6 +18,9 @@ public class User {
     private String email;
 
     private String password;
+
+    @Column(precision = 15, scale = 2)
+    private BigDecimal walletBalance;
 
     public User() {
     }
@@ -50,5 +55,13 @@ public class User {
 
     public void setPassword(String password) {
         this.password = password;
+    }
+
+    public BigDecimal getWalletBalance() {
+        return walletBalance;
+    }
+
+    public void setWalletBalance(BigDecimal walletBalance) {
+        this.walletBalance = walletBalance;
     }
 }

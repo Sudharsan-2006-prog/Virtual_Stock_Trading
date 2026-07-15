@@ -23,4 +23,22 @@ api.interceptors.request.use(
   }
 );
 
+// Wallet
+export const getWalletBalance = () => api.get("/wallet");
+
+// Portfolio
+export const getPortfolio = () => api.get("/portfolio");
+
+// Trading
+export const buyStock = (data: { stockSymbol: string; companyName: string; quantity: number; price: number }) => api.post("/trade/buy", data);
+export const sellStock = (data: { stockSymbol: string; quantity: number; price: number }) => api.post("/trade/sell", data);
+
+// Transactions
+export const getTransactions = () => api.get("/transactions");
+
+// Watchlist
+export const getWatchlist = () => api.get("/watchlist");
+export const addToWatchlist = (data: { stockSymbol: string; companyName: string }) => api.post("/watchlist", data);
+export const removeFromWatchlist = (id: number) => api.delete(`/watchlist/${id}`);
+
 export default api;
