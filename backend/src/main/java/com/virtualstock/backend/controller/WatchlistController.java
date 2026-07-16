@@ -23,12 +23,21 @@ public class WatchlistController {
     @Autowired
     private UserService userService;
 
+    @Autowired
+    private com.virtualstock.backend.service.MarketService marketService;
+
     @GetMapping
     public ResponseEntity<List<Watchlist>> getWatchlist(Authentication authentication) {
         String email = authentication.getName();
         User user = userService.getUserByEmail(email);
 
         List<Watchlist> watchlists = watchlistRepository.findByUser(user);
+        for (Watchlist item : watchlists) {
+            java.util.Map<String, Object> quote = marketService.getStockQuote(item.getStockSymbol());
+            item.setCurrentPrice((java.math.BigDecimal) quote.get("price"));
+            item.setDailyChange((java.math.BigDecimal) quote.get("dailyChange"));
+            item.setChangePercent((java.math.BigDecimal) quote.get("changePercent"));
+        }
         return ResponseEntity.ok(watchlists);
     }
 

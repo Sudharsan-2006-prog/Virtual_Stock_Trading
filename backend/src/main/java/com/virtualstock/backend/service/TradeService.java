@@ -36,9 +36,13 @@ public class TradeService {
             throw new IllegalArgumentException("Quantity must be greater than 0");
         }
 
-        BigDecimal currentPrice = marketService.getCurrentPrice(stockSymbol, frontendPrice);
-        if (currentPrice == null) {
+        BigDecimal currentPrice = marketService.getCurrentPrice(stockSymbol, null);
+        if (currentPrice == null || currentPrice.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Invalid price");
+        }
+
+        if (user.getWalletBalance() == null) {
+            throw new IllegalArgumentException("User wallet balance not initialized");
         }
 
         BigDecimal totalCost = currentPrice.multiply(new BigDecimal(quantity));
@@ -111,8 +115,8 @@ public class TradeService {
             throw new IllegalArgumentException("Insufficient stock quantity to sell");
         }
 
-        BigDecimal currentPrice = marketService.getCurrentPrice(stockSymbol, frontendPrice);
-        if (currentPrice == null) {
+        BigDecimal currentPrice = marketService.getCurrentPrice(stockSymbol, null);
+        if (currentPrice == null || currentPrice.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Invalid price");
         }
 
@@ -127,7 +131,9 @@ public class TradeService {
         if (newQuantity == 0) {
             portfolioRepository.delete(portfolio);
         } else {
-            BigDecimal remainingInvestedAmount = portfolio.getAverageBuyPrice().multiply(new BigDecimal(newQuantity));
+            BigDecimal remainingInvestedAmount = portfolio.getAverageBuyPrice()
+                    .multiply(new BigDecimal(newQuantity))
+                    .setScale(2, RoundingMode.HALF_UP);
             portfolio.setQuantity(newQuantity);
             portfolio.setInvestedAmount(remainingInvestedAmount);
             portfolio.setCurrentPrice(currentPrice);

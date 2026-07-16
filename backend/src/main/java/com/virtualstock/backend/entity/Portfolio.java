@@ -40,6 +40,9 @@ public class Portfolio {
     @Column(precision = 15, scale = 2)
     private BigDecimal profitLoss;
 
+    @Transient
+    private BigDecimal todayProfitLoss;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -151,5 +154,13 @@ public class Portfolio {
 
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
+    }
+
+    public BigDecimal getTodayProfitLoss() {
+        return todayProfitLoss;
+    }
+
+    public void setTodayProfitLoss(BigDecimal todayProfitLoss) {
+        this.todayProfitLoss = todayProfitLoss;
     }
 }

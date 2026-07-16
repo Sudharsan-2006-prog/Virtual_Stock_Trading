@@ -9,7 +9,9 @@ import {
   buyStock,
   sellStock,
   addToWatchlist,
-  removeFromWatchlist
+  removeFromWatchlist,
+  searchMarket,
+  getMarketPrice
 } from "../services/api";
 
 function Dashboard() {
@@ -24,11 +26,18 @@ function Dashboard() {
   const [tradeSymbol, setTradeSymbol] = useState("");
   const [tradeCompanyName, setTradeCompanyName] = useState("");
   const [tradeQuantity, setTradeQuantity] = useState(1);
-  const [tradePrice, setTradePrice] = useState(150.0); // Default or input
+  const [tradePrice, setTradePrice] = useState(0.0);
+  const [tradeDailyChange, setTradeDailyChange] = useState(0.0);
+  const [tradeChangePercent, setTradeChangePercent] = useState(0.0);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const [watchlistModalOpen, setWatchlistModalOpen] = useState(false);
   const [watchSymbol, setWatchSymbol] = useState("");
   const [watchCompanyName, setWatchCompanyName] = useState("");
+
+  const [searchResults, setSearchResults] = useState<{ symbol: string; name: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   useEffect(() => {
     const storedName = localStorage.getItem("fullName");
@@ -36,6 +45,59 @@ function Dashboard() {
     if (storedName) setUserName(storedName);
     if (storedEmail) setUserEmail(storedEmail);
   }, []);
+
+  useEffect(() => {
+    if (searchQuery.trim().length >= 1) {
+      setSearchLoading(true);
+      const delayDebounceFn = setTimeout(() => {
+        searchMarket(searchQuery)
+          .then((res) => {
+            setSearchResults(res.data);
+            setSearchLoading(false);
+          })
+          .catch(() => {
+            setSearchLoading(false);
+          });
+      }, 300); // 300ms debounce
+      return () => clearTimeout(delayDebounceFn);
+    } else {
+      setSearchResults([]);
+      setShowSuggestions(false);
+    }
+  }, [searchQuery]);
+
+  useEffect(() => {
+    if (!tradeModalOpen) {
+      setSearchResults([]);
+      setShowSuggestions(false);
+      setSearchQuery("");
+      setTradeSymbol("");
+      setTradeCompanyName("");
+      setTradeQuantity(1);
+      setTradePrice(0.0);
+      setTradeDailyChange(0.0);
+      setTradeChangePercent(0.0);
+    }
+  }, [tradeModalOpen]);
+
+  const handleSelectSuggestion = async (symbol: string, name: string) => {
+    setTradeSymbol(symbol);
+    setTradeCompanyName(name);
+    setSearchQuery(`${name} (${symbol})`);
+    setShowSuggestions(false);
+    
+    // Fetch live price and detailed quote for the symbol
+    try {
+      const priceRes = await getMarketPrice(symbol);
+      if (priceRes.data) {
+        setTradePrice(priceRes.data.price ?? 0.0);
+        setTradeDailyChange(priceRes.data.dailyChange ?? 0.0);
+        setTradeChangePercent(priceRes.data.changePercent ?? 0.0);
+      }
+    } catch (err) {
+      console.error("Error fetching symbol price", err);
+    }
+  };
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -48,21 +110,25 @@ function Dashboard() {
   const { data: walletData } = useQuery({
     queryKey: ["wallet"],
     queryFn: () => getWalletBalance().then((res) => res.data),
+    refetchInterval: 30000,
   });
 
   const { data: portfolio } = useQuery({
     queryKey: ["portfolio"],
     queryFn: () => getPortfolio().then((res) => res.data),
+    refetchInterval: 30000,
   });
 
   const { data: transactions } = useQuery({
     queryKey: ["transactions"],
     queryFn: () => getTransactions().then((res) => res.data),
+    refetchInterval: 30000,
   });
 
   const { data: watchlist } = useQuery({
     queryKey: ["watchlist"],
     queryFn: () => getWatchlist().then((res) => res.data),
+    refetchInterval: 30000,
   });
 
   // Mutations
@@ -74,7 +140,7 @@ function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       setTradeModalOpen(false);
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Error buying stock")
+    onError: (err: any) => alert(err.response?.data?.error || err.response?.data?.message || "Error buying stock")
   });
 
   const sellMutation = useMutation({
@@ -85,7 +151,7 @@ function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ["transactions"] });
       setTradeModalOpen(false);
     },
-    onError: (err: any) => alert(err.response?.data?.message || "Error selling stock")
+    onError: (err: any) => alert(err.response?.data?.error || err.response?.data?.message || "Error selling stock")
   });
 
   const addWatchlistMutation = useMutation({
@@ -94,7 +160,7 @@ function Dashboard() {
       queryClient.invalidateQueries({ queryKey: ["watchlist"] });
       setWatchlistModalOpen(false);
     },
-    onError: (err: any) => alert(err.response?.data || "Error adding to watchlist")
+    onError: (err: any) => alert(err.response?.data?.error || err.response?.data?.message || "Error adding to watchlist")
   });
 
   const removeWatchlistMutation = useMutation({
@@ -133,6 +199,7 @@ function Dashboard() {
   const walletBalance = walletData?.balance || 0;
   const portfolioValue = portfolio?.reduce((acc: number, item: any) => acc + item.marketValue, 0) || 0;
   const totalProfitLoss = portfolio?.reduce((acc: number, item: any) => acc + item.profitLoss, 0) || 0;
+  const todayProfitLoss = portfolio?.reduce((acc: number, item: any) => acc + (item.todayProfitLoss || 0), 0) || 0;
   const activePositions = portfolio?.length || 0;
 
   return (
@@ -227,10 +294,21 @@ function Dashboard() {
 
             {/* Total Profit/Loss */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Total Profit / Loss</h3>
-              <p className={`text-3xl font-extrabold mt-4 ${totalProfitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                ₹{totalProfitLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-              </p>
+              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Profit / Loss</h3>
+              <div className="flex justify-between items-baseline mt-4">
+                <div>
+                  <p className="text-xs text-slate-500">Total P/L</p>
+                  <p className={`text-2xl font-extrabold ${totalProfitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                    ₹{totalProfitLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-slate-500">Today's P/L</p>
+                  <p className={`text-lg font-bold ${todayProfitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                    {todayProfitLoss >= 0 ? "+" : ""}₹{todayProfitLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -247,7 +325,8 @@ function Dashboard() {
                       <th className="px-4 py-3">Avg Buy</th>
                       <th className="px-4 py-3">Current</th>
                       <th className="px-4 py-3">Market Val</th>
-                      <th className="px-4 py-3">P/L</th>
+                      <th className="px-4 py-3">Total P/L</th>
+                      <th className="px-4 py-3">Today's P/L</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -261,10 +340,13 @@ function Dashboard() {
                         <td className={`px-4 py-3 font-semibold ${item.profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
                           ₹{item.profitLoss.toFixed(2)}
                         </td>
+                        <td className={`px-4 py-3 font-semibold ${(item.todayProfitLoss ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {(item.todayProfitLoss ?? 0) >= 0 ? "+" : ""}₹{(item.todayProfitLoss ?? 0).toFixed(2)}
+                        </td>
                       </tr>
                     )) : (
                       <tr>
-                        <td colSpan={6} className="text-center py-4 text-slate-500">No stocks in portfolio</td>
+                        <td colSpan={7} className="text-center py-4 text-slate-500">No stocks in portfolio</td>
                       </tr>
                     )}
                   </tbody>
@@ -284,16 +366,27 @@ function Dashboard() {
               <div className="space-y-4">
                 {watchlist?.length > 0 ? watchlist.map((stock: any) => (
                   <div key={stock.id} className="flex justify-between items-center p-3 rounded-xl bg-slate-950/40 border border-slate-850">
-                    <div>
-                      <h4 className="font-bold text-sm">{stock.stockSymbol}</h4>
-                      <p className="text-xs text-slate-500">{stock.companyName}</p>
+                    <div className="min-w-0">
+                      <h4 className="font-bold text-sm truncate">{stock.stockSymbol}</h4>
+                      <p className="text-xs text-slate-500 truncate">{stock.companyName}</p>
                     </div>
-                    <button 
-                      onClick={() => removeWatchlistMutation.mutate(stock.id)}
-                      className="text-slate-500 hover:text-red-400"
-                    >
-                      ×
-                    </button>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right">
+                        <p className="text-sm font-bold text-slate-200">
+                          ₹{(stock.currentPrice ?? 0).toFixed(2)}
+                        </p>
+                        <p className={`text-xs font-semibold ${(stock.dailyChange ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                          {(stock.dailyChange ?? 0) >= 0 ? "+" : ""}{(stock.dailyChange ?? 0).toFixed(2)} ({(stock.changePercent ?? 0).toFixed(2)}%)
+                        </p>
+                      </div>
+                      <button 
+                        onClick={() => removeWatchlistMutation.mutate(stock.id)}
+                        className="text-slate-500 hover:text-red-400 text-lg font-bold"
+                        title="Remove from Watchlist"
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
                 )) : (
                   <p className="text-sm text-slate-500 text-center py-2">Watchlist is empty</p>
@@ -373,24 +466,76 @@ function Dashboard() {
               >SELL</button>
             </div>
             <form onSubmit={handleTrade} className="space-y-4">
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Symbol</label>
-                <input required value={tradeSymbol} onChange={e => setTradeSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="e.g. AAPL" />
+              <div className="relative">
+                <label className="block text-sm text-slate-400 mb-1">Search Stock (Symbol or Name)</label>
+                <input 
+                  required 
+                  value={searchQuery} 
+                  onChange={e => {
+                    setSearchQuery(e.target.value);
+                    setShowSuggestions(true);
+                  }} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" 
+                  placeholder="Type stock symbol or name (e.g. Apple)" 
+                  autoComplete="off"
+                />
+                {showSuggestions && (searchResults.length > 0 || searchLoading) && (
+                  <div className="absolute z-50 left-0 right-0 mt-1 bg-slate-950 border border-slate-800 rounded-lg max-h-48 overflow-y-auto shadow-2xl">
+                    {searchLoading ? (
+                      <div className="p-3 text-sm text-slate-500 text-center flex items-center justify-center gap-2">
+                        <span className="animate-spin text-lg">⏳</span>
+                        <span>Searching stocks...</span>
+                      </div>
+                    ) : (
+                      searchResults.map((item) => (
+                        <div 
+                          key={item.symbol} 
+                          onClick={() => handleSelectSuggestion(item.symbol, item.name)}
+                          className="p-2.5 hover:bg-slate-800 cursor-pointer flex justify-between items-center text-sm"
+                        >
+                          <span className="font-bold text-blue-400">{item.symbol}</span>
+                          <span className="text-slate-400 text-xs truncate max-w-[200px] text-right">{item.name}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
-              {tradeType === "BUY" && (
-                <div>
-                  <label className="block text-sm text-slate-400 mb-1">Company Name</label>
-                  <input required value={tradeCompanyName} onChange={e => setTradeCompanyName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="e.g. Apple Inc." />
+
+              {tradeSymbol && (
+                <div className="p-4 rounded-xl bg-slate-950 border border-slate-850 space-y-2.5">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Stock Name:</span>
+                    <span className="font-bold text-white text-right truncate max-w-[180px]">{tradeCompanyName}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Ticker Symbol:</span>
+                    <span className="font-bold text-blue-400">{tradeSymbol}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Market Price:</span>
+                    <span className="font-bold text-white">₹{tradePrice.toFixed(2)}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Daily Change:</span>
+                    <span className={`font-bold ${(tradeDailyChange ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {(tradeDailyChange ?? 0) >= 0 ? "+" : ""}{(tradeDailyChange ?? 0).toFixed(2)} ({(tradeChangePercent ?? 0).toFixed(2)}%)
+                    </span>
+                  </div>
                 </div>
               )}
+
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Quantity</label>
                 <input required type="number" min="1" value={tradeQuantity} onChange={e => setTradeQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" />
               </div>
-              <div>
-                <label className="block text-sm text-slate-400 mb-1">Mock Price</label>
-                <input required type="number" step="0.01" min="0.01" value={tradePrice} onChange={e => setTradePrice(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" />
-              </div>
+
+              {tradeSymbol && (
+                <div className="flex justify-between items-center py-2.5 border-t border-slate-850">
+                  <span className="text-sm text-slate-400">Estimated Total:</span>
+                  <span className="text-lg font-extrabold text-white">₹{(tradePrice * tradeQuantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                </div>
+              )}
               <button type="submit" className={`w-full py-3 rounded-xl font-bold text-white mt-2 ${tradeType === "BUY" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}`}>
                 Confirm {tradeType}
               </button>

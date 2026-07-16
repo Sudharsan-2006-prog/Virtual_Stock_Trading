@@ -37,13 +37,22 @@ public class PortfolioController {
         
         // Update current prices before returning
         for (Portfolio portfolio : portfolios) {
-            BigDecimal currentPrice = marketService.getCurrentPrice(portfolio.getStockSymbol(), portfolio.getCurrentPrice());
-            if (currentPrice != null) {
+            java.util.Map<String, Object> quote = marketService.getStockQuote(portfolio.getStockSymbol());
+            BigDecimal currentPrice = (BigDecimal) quote.get("price");
+            BigDecimal dailyChange = (BigDecimal) quote.get("dailyChange");
+            if (currentPrice != null && currentPrice.compareTo(BigDecimal.ZERO) > 0) {
                 portfolio.setCurrentPrice(currentPrice);
                 BigDecimal marketValue = currentPrice.multiply(new BigDecimal(portfolio.getQuantity()));
                 portfolio.setMarketValue(marketValue);
                 portfolio.setProfitLoss(marketValue.subtract(portfolio.getInvestedAmount()));
-                portfolioRepository.save(portfolio); // Optional: Save updated prices to DB
+                if (dailyChange != null) {
+                    portfolio.setTodayProfitLoss(dailyChange.multiply(new BigDecimal(portfolio.getQuantity())).setScale(2, java.math.RoundingMode.HALF_UP));
+                } else {
+                    portfolio.setTodayProfitLoss(BigDecimal.ZERO);
+                }
+                portfolioRepository.save(portfolio); // Save updated prices to DB
+            } else {
+                portfolio.setTodayProfitLoss(BigDecimal.ZERO);
             }
         }
 

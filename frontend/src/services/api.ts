@@ -41,4 +41,8 @@ export const getWatchlist = () => api.get("/watchlist");
 export const addToWatchlist = (data: { stockSymbol: string; companyName: string }) => api.post("/watchlist", data);
 export const removeFromWatchlist = (id: number) => api.delete(`/watchlist/${id}`);
 
+// Market
+export const searchMarket = (query: string) => api.get(`/market/search?q=${query}`);
+export const getMarketPrice = (symbol: string) => api.get(`/market/price/${symbol}`);
+
 export default api;

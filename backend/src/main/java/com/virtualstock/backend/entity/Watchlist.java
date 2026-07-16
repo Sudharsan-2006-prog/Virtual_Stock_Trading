@@ -1,6 +1,7 @@
 package com.virtualstock.backend.entity;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 
 @Entity
 @Table(name = "watchlists")
@@ -19,6 +20,15 @@ public class Watchlist {
 
     @Column(nullable = false)
     private String companyName;
+
+    @Transient
+    private BigDecimal currentPrice;
+
+    @Transient
+    private BigDecimal dailyChange;
+
+    @Transient
+    private BigDecimal changePercent;
 
     public Watchlist() {
     }
@@ -53,5 +63,29 @@ public class Watchlist {
 
     public void setCompanyName(String companyName) {
         this.companyName = companyName;
+    }
+
+    public BigDecimal getCurrentPrice() {
+        return currentPrice;
+    }
+
+    public void setCurrentPrice(BigDecimal currentPrice) {
+        this.currentPrice = currentPrice;
+    }
+
+    public BigDecimal getDailyChange() {
+        return dailyChange;
+    }
+
+    public void setDailyChange(BigDecimal dailyChange) {
+        this.dailyChange = dailyChange;
+    }
+
+    public BigDecimal getChangePercent() {
+        return changePercent;
+    }
+
+    public void setChangePercent(BigDecimal changePercent) {
+        this.changePercent = changePercent;
     }
 }

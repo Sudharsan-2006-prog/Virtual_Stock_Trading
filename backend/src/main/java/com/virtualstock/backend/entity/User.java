@@ -62,6 +62,9 @@ public class User {
     }
 
     public void setWalletBalance(BigDecimal walletBalance) {
+        if (walletBalance != null && walletBalance.compareTo(BigDecimal.ZERO) < 0) {
+            throw new IllegalArgumentException("Wallet balance cannot be negative");
+        }
         this.walletBalance = walletBalance;
     }
 }
