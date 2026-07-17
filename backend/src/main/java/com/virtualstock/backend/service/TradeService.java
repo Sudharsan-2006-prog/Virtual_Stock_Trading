@@ -28,7 +28,7 @@ public class TradeService {
     private TransactionRepository transactionRepository;
 
     @Autowired
-    private MarketService marketService;
+    private MarketDataService marketDataService;
 
     @Transactional
     public Transaction buyStock(User user, String stockSymbol, String companyName, int quantity, BigDecimal frontendPrice) {
@@ -36,7 +36,8 @@ public class TradeService {
             throw new IllegalArgumentException("Quantity must be greater than 0");
         }
 
-        BigDecimal currentPrice = marketService.getCurrentPrice(stockSymbol, null);
+        com.virtualstock.backend.dto.MarketQuoteDto quote = marketDataService.getQuote(stockSymbol);
+        BigDecimal currentPrice = quote.getCurrentPrice();
         if (currentPrice == null || currentPrice.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Invalid price");
         }
@@ -45,14 +46,18 @@ public class TradeService {
             throw new IllegalArgumentException("User wallet balance not initialized");
         }
 
-        BigDecimal totalCost = currentPrice.multiply(new BigDecimal(quantity));
+        BigDecimal nativeCost = currentPrice.multiply(new BigDecimal(quantity));
+        BigDecimal costInInr = nativeCost;
+        if ("USD".equalsIgnoreCase(quote.getCurrency())) {
+            costInInr = nativeCost.multiply(new BigDecimal("83.0")).setScale(2, RoundingMode.HALF_UP);
+        }
 
-        if (user.getWalletBalance().compareTo(totalCost) < 0) {
+        if (user.getWalletBalance().compareTo(costInInr) < 0) {
             throw new IllegalArgumentException("Insufficient wallet balance");
         }
 
-        // Deduct from wallet
-        user.setWalletBalance(user.getWalletBalance().subtract(totalCost));
+        // Deduct from wallet (in INR)
+        user.setWalletBalance(user.getWalletBalance().subtract(costInInr));
         userRepository.save(user);
 
         // Update or create portfolio
@@ -60,13 +65,15 @@ public class TradeService {
         if (existingPortfolioOpt.isPresent()) {
             Portfolio portfolio = existingPortfolioOpt.get();
             int newQuantity = portfolio.getQuantity() + quantity;
-            BigDecimal newInvestedAmount = portfolio.getInvestedAmount().add(totalCost);
+            BigDecimal newInvestedAmount = portfolio.getInvestedAmount().add(nativeCost);
             BigDecimal newAverageBuyPrice = newInvestedAmount.divide(new BigDecimal(newQuantity), 2, RoundingMode.HALF_UP);
             
             portfolio.setQuantity(newQuantity);
             portfolio.setInvestedAmount(newInvestedAmount);
             portfolio.setAverageBuyPrice(newAverageBuyPrice);
             portfolio.setCurrentPrice(currentPrice);
+            portfolio.setCurrency(quote.getCurrency());
+            portfolio.setExchange(quote.getExchange());
             
             // Market value and P/L
             BigDecimal marketValue = currentPrice.multiply(new BigDecimal(newQuantity));
@@ -78,13 +85,15 @@ public class TradeService {
             Portfolio portfolio = new Portfolio();
             portfolio.setUser(user);
             portfolio.setStockSymbol(stockSymbol);
-            portfolio.setCompanyName(companyName);
+            portfolio.setCompanyName(quote.getCompanyName());
             portfolio.setQuantity(quantity);
             portfolio.setAverageBuyPrice(currentPrice);
             portfolio.setCurrentPrice(currentPrice);
-            portfolio.setInvestedAmount(totalCost);
-            portfolio.setMarketValue(totalCost);
+            portfolio.setInvestedAmount(nativeCost);
+            portfolio.setMarketValue(nativeCost);
             portfolio.setProfitLoss(BigDecimal.ZERO);
+            portfolio.setCurrency(quote.getCurrency());
+            portfolio.setExchange(quote.getExchange());
             
             portfolioRepository.save(portfolio);
         }
@@ -93,11 +102,13 @@ public class TradeService {
         Transaction transaction = new Transaction();
         transaction.setUser(user);
         transaction.setStockSymbol(stockSymbol);
-        transaction.setCompanyName(companyName);
+        transaction.setCompanyName(quote.getCompanyName());
         transaction.setTransactionType(TransactionType.BUY);
         transaction.setQuantity(quantity);
         transaction.setPrice(currentPrice);
-        transaction.setTotalAmount(totalCost);
+        transaction.setTotalAmount(nativeCost);
+        transaction.setCurrency(quote.getCurrency());
+        transaction.setExchange(quote.getExchange());
 
         return transactionRepository.save(transaction);
     }
@@ -115,15 +126,20 @@ public class TradeService {
             throw new IllegalArgumentException("Insufficient stock quantity to sell");
         }
 
-        BigDecimal currentPrice = marketService.getCurrentPrice(stockSymbol, null);
+        com.virtualstock.backend.dto.MarketQuoteDto quote = marketDataService.getQuote(stockSymbol);
+        BigDecimal currentPrice = quote.getCurrentPrice();
         if (currentPrice == null || currentPrice.compareTo(BigDecimal.ZERO) <= 0) {
             throw new IllegalArgumentException("Invalid price");
         }
 
-        BigDecimal totalRevenue = currentPrice.multiply(new BigDecimal(quantity));
+        BigDecimal nativeRevenue = currentPrice.multiply(new BigDecimal(quantity));
+        BigDecimal revenueInInr = nativeRevenue;
+        if ("USD".equalsIgnoreCase(quote.getCurrency())) {
+            revenueInInr = nativeRevenue.multiply(new BigDecimal("83.0")).setScale(2, RoundingMode.HALF_UP);
+        }
 
-        // Credit to wallet
-        user.setWalletBalance(user.getWalletBalance().add(totalRevenue));
+        // Credit to wallet (in INR)
+        user.setWalletBalance(user.getWalletBalance().add(revenueInInr));
         userRepository.save(user);
 
         // Update portfolio
@@ -137,6 +153,8 @@ public class TradeService {
             portfolio.setQuantity(newQuantity);
             portfolio.setInvestedAmount(remainingInvestedAmount);
             portfolio.setCurrentPrice(currentPrice);
+            portfolio.setCurrency(quote.getCurrency());
+            portfolio.setExchange(quote.getExchange());
             
             BigDecimal marketValue = currentPrice.multiply(new BigDecimal(newQuantity));
             portfolio.setMarketValue(marketValue);
@@ -153,7 +171,9 @@ public class TradeService {
         transaction.setTransactionType(TransactionType.SELL);
         transaction.setQuantity(quantity);
         transaction.setPrice(currentPrice);
-        transaction.setTotalAmount(totalRevenue);
+        transaction.setTotalAmount(nativeRevenue);
+        transaction.setCurrency(quote.getCurrency());
+        transaction.setExchange(quote.getExchange());
 
         return transactionRepository.save(transaction);
     }

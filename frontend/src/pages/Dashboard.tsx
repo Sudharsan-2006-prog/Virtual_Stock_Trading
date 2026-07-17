@@ -14,6 +14,31 @@ import {
   getMarketPrice
 } from "../services/api";
 
+const SkeletonCard = () => (
+  <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl animate-pulse space-y-4">
+    <div className="h-4 bg-slate-800 rounded w-1/2" />
+    <div className="h-8 bg-slate-800 rounded w-3/4" />
+    <div className="h-3 bg-slate-800 rounded w-1/3" />
+  </div>
+);
+
+const SkeletonTable = () => (
+  <div className="space-y-3 animate-pulse p-4">
+    <div className="h-8 bg-slate-800 rounded w-full" />
+    <div className="h-6 bg-slate-850 rounded w-full" />
+    <div className="h-6 bg-slate-800 rounded w-full" />
+    <div className="h-6 bg-slate-850 rounded w-full" />
+  </div>
+);
+
+const SkeletonWatchlist = () => (
+  <div className="space-y-3 animate-pulse">
+    <div className="h-14 bg-slate-850 rounded-xl w-full" />
+    <div className="h-14 bg-slate-850 rounded-xl w-full" />
+    <div className="h-14 bg-slate-850 rounded-xl w-full" />
+  </div>
+);
+
 function Dashboard() {
   const [userName, setUserName] = useState("Trader");
   const [userEmail, setUserEmail] = useState("");
@@ -29,13 +54,15 @@ function Dashboard() {
   const [tradePrice, setTradePrice] = useState(0.0);
   const [tradeDailyChange, setTradeDailyChange] = useState(0.0);
   const [tradeChangePercent, setTradeChangePercent] = useState(0.0);
+  const [tradeExchange, setTradeExchange] = useState("");
+  const [tradeCurrency, setTradeCurrency] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
   const [watchlistModalOpen, setWatchlistModalOpen] = useState(false);
   const [watchSymbol, setWatchSymbol] = useState("");
   const [watchCompanyName, setWatchCompanyName] = useState("");
 
-  const [searchResults, setSearchResults] = useState<{ symbol: string; name: string }[]>([]);
+  const [searchResults, setSearchResults] = useState<{ symbol: string; name: string; exchange?: string; currency?: string; country?: string; }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [searchLoading, setSearchLoading] = useState(false);
 
@@ -77,22 +104,32 @@ function Dashboard() {
       setTradePrice(0.0);
       setTradeDailyChange(0.0);
       setTradeChangePercent(0.0);
+      setTradeExchange("");
+      setTradeCurrency("");
     }
   }, [tradeModalOpen]);
 
   const handleSelectSuggestion = async (symbol: string, name: string) => {
+    const matched = searchResults.find(r => r.symbol === symbol);
     setTradeSymbol(symbol);
     setTradeCompanyName(name);
     setSearchQuery(`${name} (${symbol})`);
     setShowSuggestions(false);
     
+    if (matched) {
+      setTradeExchange(matched.exchange || "");
+      setTradeCurrency(matched.currency || "");
+    }
+    
     // Fetch live price and detailed quote for the symbol
     try {
       const priceRes = await getMarketPrice(symbol);
       if (priceRes.data) {
-        setTradePrice(priceRes.data.price ?? 0.0);
-        setTradeDailyChange(priceRes.data.dailyChange ?? 0.0);
+        setTradePrice(priceRes.data.currentPrice ?? 0.0);
+        setTradeDailyChange(priceRes.data.change ?? 0.0);
         setTradeChangePercent(priceRes.data.changePercent ?? 0.0);
+        if (priceRes.data.exchange) setTradeExchange(priceRes.data.exchange);
+        if (priceRes.data.currency) setTradeCurrency(priceRes.data.currency);
       }
     } catch (err) {
       console.error("Error fetching symbol price", err);
@@ -107,29 +144,31 @@ function Dashboard() {
   };
 
   // Queries
-  const { data: walletData } = useQuery({
+  const { data: walletData, isLoading: walletLoading } = useQuery({
     queryKey: ["wallet"],
     queryFn: () => getWalletBalance().then((res) => res.data),
     refetchInterval: 30000,
   });
 
-  const { data: portfolio } = useQuery({
+  const { data: portfolio, isLoading: portfolioLoading, isError: portfolioError } = useQuery({
     queryKey: ["portfolio"],
     queryFn: () => getPortfolio().then((res) => res.data),
     refetchInterval: 30000,
   });
 
-  const { data: transactions } = useQuery({
+  const { data: transactions, isLoading: transactionsLoading } = useQuery({
     queryKey: ["transactions"],
     queryFn: () => getTransactions().then((res) => res.data),
     refetchInterval: 30000,
   });
 
-  const { data: watchlist } = useQuery({
+  const { data: watchlist, isLoading: watchlistLoading, isError: watchlistError } = useQuery({
     queryKey: ["watchlist"],
     queryFn: () => getWatchlist().then((res) => res.data),
     refetchInterval: 30000,
   });
+
+  const hasMarketError = portfolioError || watchlistError;
 
   // Mutations
   const buyMutation = useMutation({
@@ -197,10 +236,23 @@ function Dashboard() {
   };
 
   const walletBalance = walletData?.balance || 0;
-  const portfolioValue = portfolio?.reduce((acc: number, item: any) => acc + item.marketValue, 0) || 0;
-  const totalProfitLoss = portfolio?.reduce((acc: number, item: any) => acc + item.profitLoss, 0) || 0;
-  const todayProfitLoss = portfolio?.reduce((acc: number, item: any) => acc + (item.todayProfitLoss || 0), 0) || 0;
+  const portfolioValue = portfolio?.reduce((acc: number, item: any) => {
+    const val = item.marketValue || 0;
+    return acc + (item.currency === "USD" ? val * 83.0 : val);
+  }, 0) || 0;
+  
+  const totalProfitLoss = portfolio?.reduce((acc: number, item: any) => {
+    const val = item.profitLoss || 0;
+    return acc + (item.currency === "USD" ? val * 83.0 : val);
+  }, 0) || 0;
+  
+  const todayProfitLoss = portfolio?.reduce((acc: number, item: any) => {
+    const val = item.todayProfitLoss || 0;
+    return acc + (item.currency === "USD" ? val * 83.0 : val);
+  }, 0) || 0;
+  
   const activePositions = portfolio?.length || 0;
+  const watchlistCount = watchlist?.length || 0;
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex relative">
@@ -276,82 +328,116 @@ function Dashboard() {
 
         {/* Dashboard Content Container */}
         <main className="p-6 space-y-6 max-w-6xl w-full mx-auto">
+          {/* Error Banner */}
+          {hasMarketError && (
+            <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-4 rounded-xl flex items-center gap-3">
+              <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <span className="font-semibold text-sm">Unable to fetch live market data. Using cached or fallback data.</span>
+            </div>
+          )}
+
           {/* Top Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {/* Wallet Card */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl" />
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Available Balance</h3>
-              <p className="text-3xl font-extrabold text-blue-400 mt-4">₹{walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+          {walletLoading || portfolioLoading ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
             </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {/* Wallet Card */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-blue-500/5 rounded-full blur-2xl" />
+                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Available Balance</h3>
+                <p className="text-3xl font-extrabold text-blue-400 mt-4">₹{walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+              </div>
 
-            {/* Portfolio Value */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Portfolio Holdings Value</h3>
-              <p className="text-3xl font-extrabold text-slate-200 mt-4">₹{portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-              <p className="text-xs text-slate-500 mt-2">{activePositions} active positions</p>
-            </div>
+              {/* Portfolio Value */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Portfolio Value (INR Equivalent)</h3>
+                <p className="text-3xl font-extrabold text-slate-200 mt-4">₹{portfolioValue.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
+                <p className="text-xs text-slate-500 mt-2">{activePositions} active positions</p>
+              </div>
 
-            {/* Total Profit/Loss */}
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
-              <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Profit / Loss</h3>
-              <div className="flex justify-between items-baseline mt-4">
-                <div>
-                  <p className="text-xs text-slate-500">Total P/L</p>
-                  <p className={`text-2xl font-extrabold ${totalProfitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                    ₹{totalProfitLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs text-slate-500">Today's P/L</p>
-                  <p className={`text-lg font-bold ${todayProfitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                    {todayProfitLoss >= 0 ? "+" : ""}₹{todayProfitLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </p>
+              {/* Total Profit/Loss */}
+              <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl">
+                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Profit / Loss (INR Equivalent)</h3>
+                <div className="flex justify-between items-baseline mt-4">
+                  <div>
+                    <p className="text-xs text-slate-500">Total P/L</p>
+                    <p className={`text-2xl font-extrabold ${totalProfitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      ₹{totalProfitLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-slate-500">Today's P/L</p>
+                    <p className={`text-lg font-bold ${todayProfitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                      {todayProfitLoss >= 0 ? "+" : ""}₹{todayProfitLoss.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Portfolio Section */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl lg:col-span-3">
               <h3 className="text-lg font-bold text-white mb-4">Your Portfolio</h3>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm text-slate-400">
-                  <thead className="text-xs uppercase bg-slate-800 text-slate-300">
-                    <tr>
-                      <th className="px-4 py-3">Symbol</th>
-                      <th className="px-4 py-3">Qty</th>
-                      <th className="px-4 py-3">Avg Buy</th>
-                      <th className="px-4 py-3">Current</th>
-                      <th className="px-4 py-3">Market Val</th>
-                      <th className="px-4 py-3">Total P/L</th>
-                      <th className="px-4 py-3">Today's P/L</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {portfolio?.length > 0 ? portfolio.map((item: any) => (
-                      <tr key={item.id} className="border-b border-slate-800">
-                        <td className="px-4 py-3 font-semibold text-white">{item.stockSymbol}</td>
-                        <td className="px-4 py-3">{item.quantity}</td>
-                        <td className="px-4 py-3">₹{item.averageBuyPrice.toFixed(2)}</td>
-                        <td className="px-4 py-3">₹{item.currentPrice.toFixed(2)}</td>
-                        <td className="px-4 py-3">₹{item.marketValue.toFixed(2)}</td>
-                        <td className={`px-4 py-3 font-semibold ${item.profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
-                          ₹{item.profitLoss.toFixed(2)}
-                        </td>
-                        <td className={`px-4 py-3 font-semibold ${(item.todayProfitLoss ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
-                          {(item.todayProfitLoss ?? 0) >= 0 ? "+" : ""}₹{(item.todayProfitLoss ?? 0).toFixed(2)}
-                        </td>
-                      </tr>
-                    )) : (
+              {portfolioLoading ? (
+                <SkeletonTable />
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm text-slate-400">
+                    <thead className="text-xs uppercase bg-slate-800 text-slate-300">
                       <tr>
-                        <td colSpan={7} className="text-center py-4 text-slate-500">No stocks in portfolio</td>
+                        <th className="px-4 py-3">Symbol</th>
+                        <th className="px-4 py-3">Company</th>
+                        <th className="px-4 py-3">Exchange</th>
+                        <th className="px-4 py-3">Quantity</th>
+                        <th className="px-4 py-3">Average Buy Price</th>
+                        <th className="px-4 py-3">Current Market Price</th>
+                        <th className="px-4 py-3">Investment</th>
+                        <th className="px-4 py-3">Current Value</th>
+                        <th className="px-4 py-3">Profit/Loss</th>
+                        <th className="px-4 py-3">Profit/Loss %</th>
+                        <th className="px-4 py-3">Currency</th>
                       </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {portfolio?.length > 0 ? portfolio.map((item: any) => {
+                        const plPercent = item.investedAmount > 0 ? (item.profitLoss / item.investedAmount) * 100 : 0;
+                        const symbolPrefix = item.currency === "USD" ? "$" : "₹";
+                        return (
+                          <tr key={item.id} className="border-b border-slate-800 hover:bg-slate-850/30 transition">
+                            <td className="px-4 py-3 font-semibold text-white">{item.stockSymbol}</td>
+                            <td className="px-4 py-3 text-slate-300 max-w-[150px] truncate">{item.companyName}</td>
+                            <td className="px-4 py-3 text-slate-400 font-semibold text-xs uppercase">{item.exchange || "NSE"}</td>
+                            <td className="px-4 py-3">{item.quantity}</td>
+                            <td className="px-4 py-3">{symbolPrefix}{item.averageBuyPrice.toFixed(2)}</td>
+                            <td className="px-4 py-3 font-semibold text-white">{symbolPrefix}{item.currentPrice.toFixed(2)}</td>
+                            <td className="px-4 py-3">{symbolPrefix}{item.investedAmount.toFixed(2)}</td>
+                            <td className="px-4 py-3 font-semibold text-slate-200">{symbolPrefix}{item.marketValue.toFixed(2)}</td>
+                            <td className={`px-4 py-3 font-bold ${item.profitLoss >= 0 ? "text-green-400" : "text-red-400"}`}>
+                              {item.profitLoss >= 0 ? "+" : ""}{symbolPrefix}{item.profitLoss.toFixed(2)}
+                            </td>
+                            <td className={`px-4 py-3 font-bold ${plPercent >= 0 ? "text-green-400" : "text-red-400"}`}>
+                              {plPercent >= 0 ? "↑" : "↓"} {Math.abs(plPercent).toFixed(2)}%
+                            </td>
+                            <td className="px-4 py-3 text-slate-400 text-xs font-semibold uppercase">{item.currency || "INR"}</td>
+                          </tr>
+                        );
+                      }) : (
+                        <tr>
+                          <td colSpan={11} className="text-center py-6 text-slate-500 font-medium">No stocks in portfolio</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
 
@@ -360,44 +446,66 @@ function Dashboard() {
             {/* Watchlist Section */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl lg:col-span-1">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-white">Watchlist</h3>
-                <button onClick={() => setWatchlistModalOpen(true)} className="text-xs text-blue-400 hover:text-blue-300">+ Add</button>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-bold text-white">Watchlist</h3>
+                  <span className="text-xs bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-semibold">{watchlistCount} stocks</span>
+                </div>
+                <button 
+                  disabled={watchlistLoading}
+                  onClick={() => setWatchlistModalOpen(true)} 
+                  className="text-xs text-blue-400 hover:text-blue-300 font-semibold disabled:opacity-50"
+                >
+                  + Add
+                </button>
               </div>
-              <div className="space-y-4">
-                {watchlist?.length > 0 ? watchlist.map((stock: any) => (
-                  <div key={stock.id} className="flex justify-between items-center p-3 rounded-xl bg-slate-950/40 border border-slate-850">
-                    <div className="min-w-0">
-                      <h4 className="font-bold text-sm truncate">{stock.stockSymbol}</h4>
-                      <p className="text-xs text-slate-500 truncate">{stock.companyName}</p>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-slate-200">
-                          ₹{(stock.currentPrice ?? 0).toFixed(2)}
-                        </p>
-                        <p className={`text-xs font-semibold ${(stock.dailyChange ?? 0) >= 0 ? "text-green-400" : "text-red-400"}`}>
-                          {(stock.dailyChange ?? 0) >= 0 ? "+" : ""}{(stock.dailyChange ?? 0).toFixed(2)} ({(stock.changePercent ?? 0).toFixed(2)}%)
-                        </p>
+              {watchlistLoading ? (
+                <SkeletonWatchlist />
+              ) : (
+                <div className="space-y-4">
+                  {watchlist?.length > 0 ? watchlist.map((stock: any) => {
+                    const symbolPrefix = stock.currency === "USD" ? "$" : "₹";
+                    return (
+                      <div key={stock.id} className="flex justify-between items-center p-3 rounded-xl bg-slate-950/40 border border-slate-850 hover:bg-slate-900/50 transition">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <h4 className="font-bold text-sm truncate">{stock.stockSymbol}</h4>
+                            <span className="text-[10px] bg-slate-800 text-slate-400 px-1 py-0.5 rounded uppercase font-semibold">{stock.exchange || "NSE"}</span>
+                          </div>
+                          <p className="text-xs text-slate-500 truncate">{stock.companyName}</p>
+                        </div>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <div className="text-right">
+                            <p className="text-sm font-bold text-slate-200">
+                              {symbolPrefix}{(stock.currentPrice ?? 0).toFixed(2)}
+                            </p>
+                            <p className={`text-xs font-semibold ${(stock.dailyChange ?? 0) >= 0 ? "text-green-400" : "text-red-400"} flex items-center justify-end gap-0.5`}>
+                              {(stock.dailyChange ?? 0) >= 0 ? "↑" : "↓"} {Math.abs(stock.changePercent ?? 0).toFixed(2)}%
+                            </p>
+                          </div>
+                          <button 
+                            disabled={removeWatchlistMutation.isPending}
+                            onClick={() => removeWatchlistMutation.mutate(stock.id)}
+                            className="text-slate-500 hover:text-red-400 text-lg font-bold disabled:opacity-50"
+                            title="Remove from Watchlist"
+                          >
+                            ×
+                          </button>
+                        </div>
                       </div>
-                      <button 
-                        onClick={() => removeWatchlistMutation.mutate(stock.id)}
-                        className="text-slate-500 hover:text-red-400 text-lg font-bold"
-                        title="Remove from Watchlist"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  </div>
-                )) : (
-                  <p className="text-sm text-slate-500 text-center py-2">Watchlist is empty</p>
-                )}
-              </div>
+                    );
+                  }) : (
+                    <p className="text-sm text-slate-500 text-center py-4">Watchlist is empty</p>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Recent Transactions */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl lg:col-span-2 flex flex-col min-h-[300px]">
               <h3 className="text-lg font-bold text-white mb-4">Recent Transactions</h3>
-              {transactions?.length > 0 ? (
+              {transactionsLoading ? (
+                <SkeletonTable />
+              ) : transactions?.length > 0 ? (
                 <div className="overflow-x-auto flex-1">
                   <table className="w-full text-left text-sm text-slate-400">
                     <thead className="text-xs uppercase bg-slate-800 text-slate-300">
@@ -407,22 +515,27 @@ function Dashboard() {
                         <th className="px-4 py-3">Qty</th>
                         <th className="px-4 py-3">Price</th>
                         <th className="px-4 py-3">Total</th>
+                        <th className="px-4 py-3">Currency</th>
                         <th className="px-4 py-3">Date</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {transactions.slice(0, 10).map((t: any) => (
-                        <tr key={t.id} className="border-b border-slate-800">
-                          <td className={`px-4 py-3 font-bold ${t.transactionType === "BUY" ? "text-green-400" : "text-red-400"}`}>
-                            {t.transactionType}
-                          </td>
-                          <td className="px-4 py-3 font-semibold text-white">{t.stockSymbol}</td>
-                          <td className="px-4 py-3">{t.quantity}</td>
-                          <td className="px-4 py-3">₹{t.price.toFixed(2)}</td>
-                          <td className="px-4 py-3">₹{t.totalAmount.toFixed(2)}</td>
-                          <td className="px-4 py-3 text-xs">{new Date(t.timestamp).toLocaleDateString()}</td>
-                        </tr>
-                      ))}
+                      {transactions.slice(0, 10).map((t: any) => {
+                        const symbolPrefix = t.currency === "USD" ? "$" : "₹";
+                        return (
+                          <tr key={t.id} className="border-b border-slate-800 hover:bg-slate-850/30 transition">
+                            <td className={`px-4 py-3 font-bold ${t.transactionType === "BUY" ? "text-green-400" : "text-red-400"}`}>
+                              {t.transactionType}
+                            </td>
+                            <td className="px-4 py-3 font-semibold text-white">{t.stockSymbol}</td>
+                            <td className="px-4 py-3">{t.quantity}</td>
+                            <td className="px-4 py-3">{symbolPrefix}{t.price.toFixed(2)}</td>
+                            <td className="px-4 py-3">{symbolPrefix}{t.totalAmount.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-slate-400 text-xs font-semibold uppercase">{t.currency || "INR"}</td>
+                            <td className="px-4 py-3 text-xs">{new Date(t.timestamp).toLocaleDateString()}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -435,7 +548,7 @@ function Dashboard() {
                   </div>
                   <h4 className="font-bold text-slate-400 text-sm mb-1">No Transactions Record</h4>
                   <p className="text-xs text-slate-600 max-w-xs leading-relaxed">
-                    You haven't bought or sold any stocks yet. Place a mock order to view your transaction logging.
+                    You haven't bought or sold any stocks yet. Place a order to view your transaction logging.
                   </p>
                 </div>
               )}
@@ -470,13 +583,14 @@ function Dashboard() {
                 <label className="block text-sm text-slate-400 mb-1">Search Stock (Symbol or Name)</label>
                 <input 
                   required 
+                  disabled={buyMutation.isPending || sellMutation.isPending}
                   value={searchQuery} 
                   onChange={e => {
                     setSearchQuery(e.target.value);
                     setShowSuggestions(true);
                   }} 
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" 
-                  placeholder="Type stock symbol or name (e.g. Apple)" 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white disabled:opacity-50" 
+                  placeholder="Type stock symbol or name (e.g. Apple or Reliance)" 
                   autoComplete="off"
                 />
                 {showSuggestions && (searchResults.length > 0 || searchLoading) && (
@@ -491,10 +605,16 @@ function Dashboard() {
                         <div 
                           key={item.symbol} 
                           onClick={() => handleSelectSuggestion(item.symbol, item.name)}
-                          className="p-2.5 hover:bg-slate-800 cursor-pointer flex justify-between items-center text-sm"
+                          className="p-2.5 hover:bg-slate-800 cursor-pointer flex justify-between items-center text-sm border-b border-slate-900 last:border-0"
                         >
-                          <span className="font-bold text-blue-400">{item.symbol}</span>
-                          <span className="text-slate-400 text-xs truncate max-w-[200px] text-right">{item.name}</span>
+                          <div className="flex flex-col text-left">
+                            <span className="font-bold text-blue-400">{item.symbol}</span>
+                            <span className="text-slate-500 text-[10px] uppercase font-semibold">{item.exchange || "NSE"} • {item.currency || "INR"}</span>
+                          </div>
+                          <div className="text-right flex flex-col min-w-0">
+                            <span className="font-semibold text-slate-200 truncate max-w-[180px]">{item.name}</span>
+                            <span className="text-slate-500 text-[10px]">{item.country || "India"}</span>
+                          </div>
                         </div>
                       ))
                     )}
@@ -513,8 +633,14 @@ function Dashboard() {
                     <span className="font-bold text-blue-400">{tradeSymbol}</span>
                   </div>
                   <div className="flex justify-between text-sm">
+                    <span className="text-slate-400">Exchange:</span>
+                    <span className="font-bold text-slate-300">{tradeExchange}</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
                     <span className="text-slate-400">Market Price:</span>
-                    <span className="font-bold text-white">₹{tradePrice.toFixed(2)}</span>
+                    <span className="font-bold text-white">
+                      {tradeCurrency === "USD" ? "$" : "₹"}{tradePrice.toFixed(2)}
+                    </span>
                   </div>
                   <div className="flex justify-between text-sm">
                     <span className="text-slate-400">Daily Change:</span>
@@ -527,16 +653,33 @@ function Dashboard() {
 
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Quantity</label>
-                <input required type="number" min="1" value={tradeQuantity} onChange={e => setTradeQuantity(Number(e.target.value))} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" />
+                <input 
+                  required 
+                  type="number" 
+                  min="1" 
+                  disabled={buyMutation.isPending || sellMutation.isPending}
+                  value={tradeQuantity} 
+                  onChange={e => setTradeQuantity(Number(e.target.value))} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white disabled:opacity-50" 
+                />
               </div>
 
               {tradeSymbol && (
-                <div className="flex justify-between items-center py-2.5 border-t border-slate-850">
+                <div className="flex justify-between items-center py-2.5 border-t border-slate-855">
                   <span className="text-sm text-slate-400">Estimated Total:</span>
-                  <span className="text-lg font-extrabold text-white">₹{(tradePrice * tradeQuantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                  <span className="text-lg font-extrabold text-white">
+                    {tradeCurrency === "USD" ? "$" : "₹"}{(tradePrice * tradeQuantity).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                  </span>
                 </div>
               )}
-              <button type="submit" className={`w-full py-3 rounded-xl font-bold text-white mt-2 ${tradeType === "BUY" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}`}>
+              <button 
+                type="submit" 
+                disabled={buyMutation.isPending || sellMutation.isPending}
+                className={`w-full py-3 rounded-xl font-bold text-white mt-2 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${tradeType === "BUY" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}`}
+              >
+                {(buyMutation.isPending || sellMutation.isPending) && (
+                  <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                )}
                 Confirm {tradeType}
               </button>
             </form>
@@ -558,11 +701,11 @@ function Dashboard() {
             <form onSubmit={handleAddWatchlist} className="space-y-4">
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Symbol</label>
-                <input required value={watchSymbol} onChange={e => setWatchSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="e.g. AAPL" />
+                <input required value={watchSymbol} onChange={e => setWatchSymbol(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="e.g. AAPL or RELIANCE" />
               </div>
               <div>
                 <label className="block text-sm text-slate-400 mb-1">Company Name</label>
-                <input required value={watchCompanyName} onChange={e => setWatchCompanyName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="e.g. Apple Inc." />
+                <input required value={watchCompanyName} onChange={e => setWatchCompanyName(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-white" placeholder="e.g. Apple Inc. or Reliance Industries" />
               </div>
               <button type="submit" className="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 font-bold text-white mt-2">
                 Add Stock

@@ -46,6 +46,12 @@ public class Portfolio {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    @Column(nullable = true)
+    private String currency;
+
+    @Column(nullable = true)
+    private String exchange;
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();
@@ -162,5 +168,21 @@ public class Portfolio {
 
     public void setTodayProfitLoss(BigDecimal todayProfitLoss) {
         this.todayProfitLoss = todayProfitLoss;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public String getExchange() {
+        return exchange;
+    }
+
+    public void setExchange(String exchange) {
+        this.exchange = exchange;
     }
 }

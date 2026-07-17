@@ -24,7 +24,7 @@ public class WatchlistController {
     private UserService userService;
 
     @Autowired
-    private com.virtualstock.backend.service.MarketService marketService;
+    private com.virtualstock.backend.service.MarketDataService marketDataService;
 
     @GetMapping
     public ResponseEntity<List<Watchlist>> getWatchlist(Authentication authentication) {
@@ -33,10 +33,20 @@ public class WatchlistController {
 
         List<Watchlist> watchlists = watchlistRepository.findByUser(user);
         for (Watchlist item : watchlists) {
-            java.util.Map<String, Object> quote = marketService.getStockQuote(item.getStockSymbol());
-            item.setCurrentPrice((java.math.BigDecimal) quote.get("price"));
-            item.setDailyChange((java.math.BigDecimal) quote.get("dailyChange"));
-            item.setChangePercent((java.math.BigDecimal) quote.get("changePercent"));
+            try {
+                com.virtualstock.backend.dto.MarketQuoteDto quote = marketDataService.getQuote(item.getStockSymbol());
+                item.setCurrentPrice(quote.getCurrentPrice());
+                item.setDailyChange(quote.getChange());
+                item.setChangePercent(quote.getChangePercent());
+                item.setCurrency(quote.getCurrency());
+                item.setExchange(quote.getExchange());
+                watchlistRepository.save(item); // Persist updated currency and exchange details
+            } catch (Exception e) {
+                System.err.println("Error updating watchlist price for " + item.getStockSymbol() + ": " + e.getMessage());
+                item.setCurrentPrice(java.math.BigDecimal.ZERO);
+                item.setDailyChange(java.math.BigDecimal.ZERO);
+                item.setChangePercent(java.math.BigDecimal.ZERO);
+            }
         }
         return ResponseEntity.ok(watchlists);
     }
@@ -55,6 +65,16 @@ public class WatchlistController {
         watchlist.setUser(user);
         watchlist.setStockSymbol(request.getStockSymbol());
         watchlist.setCompanyName(request.getCompanyName());
+        
+        try {
+            com.virtualstock.backend.dto.MarketQuoteDto quote = marketDataService.getQuote(request.getStockSymbol());
+            watchlist.setCompanyName(quote.getCompanyName());
+            watchlist.setCurrency(quote.getCurrency());
+            watchlist.setExchange(quote.getExchange());
+        } catch (Exception e) {
+            watchlist.setCurrency("NSE".equalsIgnoreCase(request.getStockSymbol()) ? "INR" : "USD");
+            watchlist.setExchange("NSE".equalsIgnoreCase(request.getStockSymbol()) ? "NSE" : "NASDAQ");
+        }
 
         Watchlist saved = watchlistRepository.save(watchlist);
         return ResponseEntity.ok(saved);

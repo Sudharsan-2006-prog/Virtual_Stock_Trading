@@ -37,6 +37,12 @@ public class Transaction {
 
     private LocalDateTime timestamp;
 
+    @Column(nullable = true)
+    private String currency;
+
+    @Column(nullable = true)
+    private String exchange;
+
     @PrePersist
     protected void onCreate() {
         timestamp = LocalDateTime.now();
@@ -115,5 +121,21 @@ public class Transaction {
 
     public void setTimestamp(LocalDateTime timestamp) {
         this.timestamp = timestamp;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public String getExchange() {
+        return exchange;
+    }
+
+    public void setExchange(String exchange) {
+        this.exchange = exchange;
     }
 }

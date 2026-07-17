@@ -43,6 +43,8 @@ export const removeFromWatchlist = (id: number) => api.delete(`/watchlist/${id}`
 
 // Market
 export const searchMarket = (query: string) => api.get(`/market/search?q=${query}`);
-export const getMarketPrice = (symbol: string) => api.get(`/market/price/${symbol}`);
+export const getMarketPrice = (symbol: string) => api.get(`/market/quote/${symbol}`);
+export const getMarketHistory = (symbol: string) => api.get(`/market/history/${symbol}`);
+export const getCompanyInfo = (symbol: string) => api.get(`/market/company/${symbol}`);
 
 export default api;

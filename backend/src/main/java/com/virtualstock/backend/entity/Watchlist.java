@@ -24,6 +24,12 @@ public class Watchlist {
     @Transient
     private BigDecimal currentPrice;
 
+    @Column(nullable = true)
+    private String currency;
+
+    @Column(nullable = true)
+    private String exchange;
+
     @Transient
     private BigDecimal dailyChange;
 
@@ -87,5 +93,21 @@ public class Watchlist {
 
     public void setChangePercent(BigDecimal changePercent) {
         this.changePercent = changePercent;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public String getExchange() {
+        return exchange;
+    }
+
+    public void setExchange(String exchange) {
+        this.exchange = exchange;
     }
 }

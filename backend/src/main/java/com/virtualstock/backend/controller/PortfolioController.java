@@ -3,7 +3,7 @@ package com.virtualstock.backend.controller;
 import com.virtualstock.backend.entity.Portfolio;
 import com.virtualstock.backend.entity.User;
 import com.virtualstock.backend.repository.PortfolioRepository;
-import com.virtualstock.backend.service.MarketService;
+import com.virtualstock.backend.service.MarketDataService;
 import com.virtualstock.backend.service.UserService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -26,7 +26,7 @@ public class PortfolioController {
     private UserService userService;
 
     @Autowired
-    private MarketService marketService;
+    private MarketDataService marketDataService;
 
     @GetMapping
     public ResponseEntity<List<Portfolio>> getPortfolio(Authentication authentication) {
@@ -37,21 +37,28 @@ public class PortfolioController {
         
         // Update current prices before returning
         for (Portfolio portfolio : portfolios) {
-            java.util.Map<String, Object> quote = marketService.getStockQuote(portfolio.getStockSymbol());
-            BigDecimal currentPrice = (BigDecimal) quote.get("price");
-            BigDecimal dailyChange = (BigDecimal) quote.get("dailyChange");
-            if (currentPrice != null && currentPrice.compareTo(BigDecimal.ZERO) > 0) {
-                portfolio.setCurrentPrice(currentPrice);
-                BigDecimal marketValue = currentPrice.multiply(new BigDecimal(portfolio.getQuantity()));
-                portfolio.setMarketValue(marketValue);
-                portfolio.setProfitLoss(marketValue.subtract(portfolio.getInvestedAmount()));
-                if (dailyChange != null) {
-                    portfolio.setTodayProfitLoss(dailyChange.multiply(new BigDecimal(portfolio.getQuantity())).setScale(2, java.math.RoundingMode.HALF_UP));
+            try {
+                com.virtualstock.backend.dto.MarketQuoteDto quote = marketDataService.getQuote(portfolio.getStockSymbol());
+                BigDecimal currentPrice = quote.getCurrentPrice();
+                BigDecimal dailyChange = quote.getChange();
+                if (currentPrice != null && currentPrice.compareTo(BigDecimal.ZERO) > 0) {
+                    portfolio.setCurrentPrice(currentPrice);
+                    portfolio.setCurrency(quote.getCurrency());
+                    portfolio.setExchange(quote.getExchange());
+                    BigDecimal marketValue = currentPrice.multiply(new BigDecimal(portfolio.getQuantity()));
+                    portfolio.setMarketValue(marketValue);
+                    portfolio.setProfitLoss(marketValue.subtract(portfolio.getInvestedAmount()));
+                    if (dailyChange != null) {
+                        portfolio.setTodayProfitLoss(dailyChange.multiply(new BigDecimal(portfolio.getQuantity())).setScale(2, java.math.RoundingMode.HALF_UP));
+                    } else {
+                        portfolio.setTodayProfitLoss(BigDecimal.ZERO);
+                    }
+                    portfolioRepository.save(portfolio); // Save updated prices to DB
                 } else {
                     portfolio.setTodayProfitLoss(BigDecimal.ZERO);
                 }
-                portfolioRepository.save(portfolio); // Save updated prices to DB
-            } else {
+            } catch (Exception e) {
+                System.err.println("Error updating portfolio price for " + portfolio.getStockSymbol() + ": " + e.getMessage());
                 portfolio.setTodayProfitLoss(BigDecimal.ZERO);
             }
         }
