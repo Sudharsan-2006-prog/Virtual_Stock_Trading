@@ -30,8 +30,10 @@ public class MarketController {
     }
 
     @GetMapping("/history/{symbol}")
-    public ResponseEntity<MarketHistoryDto> getHistory(@PathVariable("symbol") String symbol) {
-        return ResponseEntity.ok(marketDataService.getHistory(symbol));
+    public ResponseEntity<MarketHistoryDto> getHistory(
+            @PathVariable("symbol") String symbol,
+            @RequestParam(value = "range", defaultValue = "1M") String range) {
+        return ResponseEntity.ok(marketDataService.getHistory(symbol, range));
     }
 
     @GetMapping("/company/{symbol}")

@@ -50,6 +50,10 @@ public class MarketDataService {
     }
 
     public MarketHistoryDto getHistory(String symbol) {
+        return getHistory(symbol, "1M");
+    }
+
+    public MarketHistoryDto getHistory(String symbol, String range) {
         if (symbol == null || symbol.trim().isEmpty()) {
             throw new IllegalArgumentException("Symbol cannot be empty");
         }
@@ -63,7 +67,9 @@ public class MarketDataService {
         // Try Twelve Data
         if (isKeyValid(twelveDataApiKey)) {
             try {
-                history = fetchHistoryTwelveData(cleanSymbol, defaultExchange);
+                if ("1M".equalsIgnoreCase(range) || range == null) {
+                    history = fetchHistoryTwelveData(cleanSymbol, defaultExchange);
+                }
             } catch (Exception e) {
                 System.err.println("Twelve Data history failed: " + e.getMessage());
             }
@@ -72,7 +78,9 @@ public class MarketDataService {
         // Try Finnhub
         if (history == null && isKeyValid(finnhubApiKey)) {
             try {
-                history = fetchHistoryFinnhub(cleanSymbol, defaultExchange);
+                if ("1M".equalsIgnoreCase(range) || range == null) {
+                    history = fetchHistoryFinnhub(cleanSymbol, defaultExchange);
+                }
             } catch (Exception e) {
                 System.err.println("Finnhub history failed: " + e.getMessage());
             }
@@ -81,7 +89,9 @@ public class MarketDataService {
         // Try Alpha Vantage
         if (history == null && isKeyValid(alphaVantageApiKey)) {
             try {
-                history = fetchHistoryAlphaVantage(cleanSymbol, defaultExchange);
+                if ("1M".equalsIgnoreCase(range) || range == null) {
+                    history = fetchHistoryAlphaVantage(cleanSymbol, defaultExchange);
+                }
             } catch (Exception e) {
                 System.err.println("Alpha Vantage history failed: " + e.getMessage());
             }
@@ -92,8 +102,8 @@ public class MarketDataService {
         }
 
         // Fallback: Generate mock history
-        System.out.println("Generating fallback mock history for " + cleanSymbol);
-        return generateMockHistory(cleanSymbol);
+        System.out.println("Generating fallback mock history for " + cleanSymbol + " with range " + range);
+        return generateMockHistory(cleanSymbol, range);
     }
 
     public CompanyProfileDto getCompanyProfile(String symbol) {
@@ -136,13 +146,31 @@ public class MarketDataService {
         }
 
         if (profile != null) {
-            return profile;
+            return enrichProfile(profile);
         }
 
         // Fallback: generate mock profile
         System.out.println("Generating fallback mock profile for " + cleanSymbol);
         return generateMockProfile(cleanSymbol, defaultExchange, defaultCurrency);
     }
+
+    private CompanyProfileDto enrichProfile(CompanyProfileDto profile) {
+        if (profile == null) return null;
+        if (profile.getMarketCap() == null) {
+            CompanyProfileDto mock = generateMockProfile(profile.getSymbol(), profile.getExchange(), profile.getCurrency());
+            profile.setMarketCap(mock.getMarketCap());
+            profile.setFiftyTwoWeekHigh(mock.getFiftyTwoWeekHigh());
+            profile.setFiftyTwoWeekLow(mock.getFiftyTwoWeekLow());
+            profile.setPeRatio(mock.getPeRatio());
+            profile.setDividendYield(mock.getDividendYield());
+            profile.setVolume(mock.getVolume());
+            if (profile.getSector() == null || profile.getSector().isEmpty() || "Generic Sector".equalsIgnoreCase(profile.getSector())) {
+                profile.setSector(mock.getSector());
+            }
+        }
+        return profile;
+    }
+
 
     private boolean isKeyValid(String key) {
         return key != null && !key.trim().isEmpty() && !key.equalsIgnoreCase("YOUR_KEY");
@@ -345,30 +373,85 @@ public class MarketDataService {
 
     // Fallback Generators
     private MarketHistoryDto generateMockHistory(String symbol) {
+        return generateMockHistory(symbol, "1M");
+    }
+
+    private MarketHistoryDto generateMockHistory(String symbol, String range) {
         List<MarketHistoryDto.HistoryPoint> points = new ArrayList<>();
         BigDecimal currentPrice = new BigDecimal("100.00");
         
-        // Match specific prices
         if ("AAPL".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("175.50");
         else if ("MSFT".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("380.10");
+        else if ("GOOGL".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("150.20");
+        else if ("AMZN".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("145.40");
+        else if ("TSLA".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("220.50");
+        else if ("NVDA".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("974.00");
         else if ("RELIANCE".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("2450.00");
         else if ("TCS".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("3400.00");
+        else if ("INFY".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("1500.00");
+        else if ("HDFCBANK".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("1450.00");
+        else if ("ICICIBANK".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("1050.00");
+        else if ("SBIN".equalsIgnoreCase(symbol)) currentPrice = new BigDecimal("750.00");
 
         Calendar cal = Calendar.getInstance();
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd");
+        SimpleDateFormat sdfDate = new SimpleDateFormat("yyyy-MM-dd");
+        SimpleDateFormat sdfTime = new SimpleDateFormat("HH:mm");
 
-        for (int i = 0; i < 30; i++) {
-            String date = sdf.format(cal.getTime());
-            BigDecimal open = currentPrice.multiply(BigDecimal.valueOf(0.99 + (Math.random() * 0.02))).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal close = currentPrice.multiply(BigDecimal.valueOf(0.99 + (Math.random() * 0.02))).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal high = open.max(close).multiply(BigDecimal.valueOf(1.0 + (Math.random() * 0.01))).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal low = open.min(close).multiply(BigDecimal.valueOf(0.99)).setScale(2, RoundingMode.HALF_UP);
-            Long volume = (long) (Math.random() * 2000000) + 50000L;
+        int numPoints;
+        boolean isIntraday = false;
 
-            points.add(new MarketHistoryDto.HistoryPoint(date, open, high, low, close, volume));
+        switch (range.toUpperCase()) {
+            case "1D":
+                numPoints = 24; // 24 hours of data
+                isIntraday = true;
+                break;
+            case "1W":
+                numPoints = 7;
+                break;
+            case "3M":
+                numPoints = 90;
+                break;
+            case "6M":
+                numPoints = 180;
+                break;
+            case "1Y":
+                numPoints = 250; // trading days in a year
+                break;
+            case "1M":
+            default:
+                numPoints = 30;
+                break;
+        }
 
-            currentPrice = close;
-            cal.add(Calendar.DATE, -1);
+        // Generate points moving forward in time so they chart correctly from left to right
+        if (isIntraday) {
+            cal.add(Calendar.HOUR, -numPoints);
+            for (int i = 0; i < numPoints; i++) {
+                String label = sdfTime.format(cal.getTime());
+                BigDecimal open = currentPrice.multiply(BigDecimal.valueOf(0.998 + (Math.random() * 0.004))).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal close = currentPrice.multiply(BigDecimal.valueOf(0.998 + (Math.random() * 0.004))).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal high = open.max(close).multiply(BigDecimal.valueOf(1.0 + (Math.random() * 0.002))).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal low = open.min(close).multiply(BigDecimal.valueOf(0.998)).setScale(2, RoundingMode.HALF_UP);
+                Long volume = (long) (Math.random() * 50000) + 5000L;
+
+                points.add(new MarketHistoryDto.HistoryPoint(label, open, high, low, close, volume));
+                currentPrice = close;
+                cal.add(Calendar.HOUR, 1);
+            }
+        } else {
+            cal.add(Calendar.DATE, -numPoints);
+            for (int i = 0; i < numPoints; i++) {
+                String label = sdfDate.format(cal.getTime());
+                BigDecimal open = currentPrice.multiply(BigDecimal.valueOf(0.99 + (Math.random() * 0.02))).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal close = currentPrice.multiply(BigDecimal.valueOf(0.99 + (Math.random() * 0.02))).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal high = open.max(close).multiply(BigDecimal.valueOf(1.0 + (Math.random() * 0.01))).setScale(2, RoundingMode.HALF_UP);
+                BigDecimal low = open.min(close).multiply(BigDecimal.valueOf(0.99)).setScale(2, RoundingMode.HALF_UP);
+                Long volume = (long) (Math.random() * 2000000) + 50000L;
+
+                points.add(new MarketHistoryDto.HistoryPoint(label, open, high, low, close, volume));
+                currentPrice = close;
+                cal.add(Calendar.DATE, 1);
+            }
         }
 
         return new MarketHistoryDto(symbol, points);
@@ -381,10 +464,118 @@ public class MarketDataService {
         String resolvedCurrency = currency != null ? currency : (mockInfo != null ? mockInfo[2] : "USD");
         String country = "INR".equalsIgnoreCase(resolvedCurrency) ? "India" : "United States";
         String industry = "INR".equalsIgnoreCase(resolvedCurrency) ? "Conglomerate" : "Consumer Electronics / Software";
-        String sector = "INR".equalsIgnoreCase(resolvedCurrency) ? "Diverse" : "Technology";
-        String website = "INR".equalsIgnoreCase(resolvedCurrency) ? "https://www.ril.com" : "https://www.apple.com";
+        String sector = "INR".equalsIgnoreCase(resolvedCurrency) ? "Energy" : "Technology";
+        
+        // Mock metrics based on symbol
+        BigDecimal marketCap = new BigDecimal("150.5"); // default 150B
+        BigDecimal fiftyTwoWeekHigh = new BigDecimal("180.00");
+        BigDecimal fiftyTwoWeekLow = new BigDecimal("120.00");
+        BigDecimal peRatio = new BigDecimal("25.5");
+        BigDecimal dividendYield = new BigDecimal("1.2");
+        Long volume = 1500000L;
+
+        if ("AAPL".equalsIgnoreCase(symbol)) {
+            sector = "Technology";
+            marketCap = new BigDecimal("3200.0"); // 3.2T
+            fiftyTwoWeekHigh = new BigDecimal("199.62");
+            fiftyTwoWeekLow = new BigDecimal("164.08");
+            peRatio = new BigDecimal("31.2");
+            dividendYield = new BigDecimal("0.48");
+            volume = 52000000L;
+        } else if ("MSFT".equalsIgnoreCase(symbol)) {
+            sector = "Technology";
+            marketCap = new BigDecimal("3150.0"); // 3.15T
+            fiftyTwoWeekHigh = new BigDecimal("430.82");
+            fiftyTwoWeekLow = new BigDecimal("315.18");
+            peRatio = new BigDecimal("35.4");
+            dividendYield = new BigDecimal("0.71");
+            volume = 22000000L;
+        } else if ("GOOGL".equalsIgnoreCase(symbol)) {
+            sector = "Technology";
+            marketCap = new BigDecimal("1850.0"); // 1.85T
+            fiftyTwoWeekHigh = new BigDecimal("160.22");
+            fiftyTwoWeekLow = new BigDecimal("115.50");
+            peRatio = new BigDecimal("26.1");
+            dividendYield = new BigDecimal("0.40");
+            volume = 28000000L;
+        } else if ("AMZN".equalsIgnoreCase(symbol)) {
+            sector = "Others";
+            marketCap = new BigDecimal("1800.0");
+            fiftyTwoWeekHigh = new BigDecimal("189.77");
+            fiftyTwoWeekLow = new BigDecimal("118.35");
+            peRatio = new BigDecimal("60.5");
+            dividendYield = BigDecimal.ZERO;
+            volume = 35000000L;
+        } else if ("TSLA".equalsIgnoreCase(symbol)) {
+            sector = "Others";
+            marketCap = new BigDecimal("600.0");
+            fiftyTwoWeekHigh = new BigDecimal("299.29");
+            fiftyTwoWeekLow = new BigDecimal("138.80");
+            peRatio = new BigDecimal("45.8");
+            dividendYield = BigDecimal.ZERO;
+            volume = 85000000L;
+        } else if ("NVDA".equalsIgnoreCase(symbol)) {
+            sector = "Technology";
+            marketCap = new BigDecimal("2800.0");
+            fiftyTwoWeekHigh = new BigDecimal("974.00");
+            fiftyTwoWeekLow = new BigDecimal("373.56");
+            peRatio = new BigDecimal("75.2");
+            dividendYield = new BigDecimal("0.02");
+            volume = 42000000L;
+        } else if ("RELIANCE".equalsIgnoreCase(symbol)) {
+            sector = "Energy";
+            marketCap = new BigDecimal("16500.0"); // 16.5T INR
+            fiftyTwoWeekHigh = new BigDecimal("2750.00");
+            fiftyTwoWeekLow = new BigDecimal("2200.00");
+            peRatio = new BigDecimal("28.4");
+            dividendYield = new BigDecimal("0.38");
+            volume = 5500000L;
+        } else if ("TCS".equalsIgnoreCase(symbol)) {
+            sector = "Technology";
+            marketCap = new BigDecimal("13500.0");
+            fiftyTwoWeekHigh = new BigDecimal("4254.75");
+            fiftyTwoWeekLow = new BigDecimal("3070.30");
+            peRatio = new BigDecimal("30.1");
+            dividendYield = new BigDecimal("2.43");
+            volume = 1200000L;
+        } else if ("INFY".equalsIgnoreCase(symbol)) {
+            sector = "Technology";
+            marketCap = new BigDecimal("6500.0");
+            fiftyTwoWeekHigh = new BigDecimal("1733.00");
+            fiftyTwoWeekLow = new BigDecimal("1215.00");
+            peRatio = new BigDecimal("24.8");
+            dividendYield = new BigDecimal("2.35");
+            volume = 4800000L;
+        } else if ("HDFCBANK".equalsIgnoreCase(symbol)) {
+            sector = "Banking";
+            marketCap = new BigDecimal("11500.0");
+            fiftyTwoWeekHigh = new BigDecimal("1757.50");
+            fiftyTwoWeekLow = new BigDecimal("1363.55");
+            peRatio = new BigDecimal("18.2");
+            dividendYield = new BigDecimal("1.10");
+            volume = 15000000L;
+        } else if ("ICICIBANK".equalsIgnoreCase(symbol)) {
+            sector = "Banking";
+            marketCap = new BigDecimal("7200.0");
+            fiftyTwoWeekHigh = new BigDecimal("1168.00");
+            fiftyTwoWeekLow = new BigDecimal("898.85");
+            peRatio = new BigDecimal("17.4");
+            dividendYield = new BigDecimal("0.85");
+            volume = 12000000L;
+        } else if ("SBIN".equalsIgnoreCase(symbol)) {
+            sector = "Banking";
+            marketCap = new BigDecimal("6800.0");
+            fiftyTwoWeekHigh = new BigDecimal("839.65");
+            fiftyTwoWeekLow = new BigDecimal("555.30");
+            peRatio = new BigDecimal("11.5");
+            dividendYield = new BigDecimal("1.65");
+            volume = 20000000L;
+        }
+
+        String web = mockInfo != null ? mockInfo[0].toLowerCase().replaceAll("[^a-z0-9]", "") + ".com" : "google.com";
+        String website = "https://www." + web;
         String desc = "Mock Profile: " + name + " is a leading global listing traded on exchange " + resolvedExchange + " in currency " + resolvedCurrency + ".";
 
-        return new CompanyProfileDto(symbol, name, resolvedExchange, resolvedCurrency, country, industry, sector, desc, website);
+        return new CompanyProfileDto(symbol, name, resolvedExchange, resolvedCurrency, country, industry, sector, desc, website, marketCap, fiftyTwoWeekHigh, fiftyTwoWeekLow, peRatio, dividendYield, volume);
     }
 }
