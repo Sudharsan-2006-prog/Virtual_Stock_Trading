@@ -184,7 +184,9 @@ function Dashboard() {
     refetchInterval: 30000,
   });
 
-  const hasMarketError = portfolioError || watchlistError;
+  // Market data errors are tracked separately via direct API calls.
+  // Portfolio/watchlist errors are auth-related, NOT market data errors.
+  const hasMarketError = false;
 
   // Mutations
   const buyMutation = useMutation({

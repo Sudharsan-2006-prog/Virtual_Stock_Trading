@@ -56,7 +56,7 @@ public class MarketQuoteService {
         }
 
         boolean isExpired() {
-            return System.currentTimeMillis() - this.timestamp > 30000; // 30 seconds
+            return System.currentTimeMillis() - this.timestamp > 120000; // 120 seconds (2 minutes)
         }
     }
 
@@ -66,102 +66,165 @@ public class MarketQuoteService {
         }
 
         String cleanSymbol = symbol.trim().toUpperCase();
+        System.out.println("[MarketQuoteService] getQuote called for: " + cleanSymbol
+                + " | TwelveData key valid: " + isKeyValid(twelveDataApiKey)
+                + " | Finnhub key valid: " + isKeyValid(finnhubApiKey)
+                + " | AlphaVantage key valid: " + isKeyValid(alphaVantageApiKey));
 
-        // 1. Check cache
+        // 1. Check cache (lock-free read)
         CachedQuote cached = cache.get(cleanSymbol);
         if (cached != null && !cached.isExpired()) {
+            System.out.println("[MarketQuoteService] Returning cached quote for " + cleanSymbol);
             return cached.quote;
         }
 
-        // 2. Resolve default exchange/currency for formatting if available
-        String[] mockInfo = marketSearchService.getMockDetails(cleanSymbol);
-        String defaultExchange = mockInfo != null ? mockInfo[1] : null;
-        String defaultCurrency = mockInfo != null ? mockInfo[2] : null;
-
-        MarketQuoteDto quote = null;
-
-        // Try Twelve Data
-        if (isKeyValid(twelveDataApiKey)) {
-            try {
-                quote = fetchTwelveData(cleanSymbol, defaultExchange);
-            } catch (Exception e) {
-                System.err.println("Twelve Data quote failed for " + cleanSymbol + ": " + e.getMessage());
+        // Deduplicate concurrent requests for the same symbol
+        synchronized (cleanSymbol.intern()) {
+            // Recheck cache inside lock
+            cached = cache.get(cleanSymbol);
+            if (cached != null && !cached.isExpired()) {
+                System.out.println("[MarketQuoteService] Returning cached quote for " + cleanSymbol + " (inside lock)");
+                return cached.quote;
             }
-        }
 
-        // Try Finnhub
-        if (quote == null && isKeyValid(finnhubApiKey)) {
-            try {
-                quote = fetchFinnhub(cleanSymbol, defaultExchange);
-            } catch (Exception e) {
-                System.err.println("Finnhub quote failed for " + cleanSymbol + ": " + e.getMessage());
+            // 2. Resolve default exchange/currency for formatting if available
+            String[] mockInfo = marketSearchService.getMockDetails(cleanSymbol);
+            String defaultExchange = mockInfo != null ? mockInfo[1] : null;
+            String defaultCurrency = mockInfo != null ? mockInfo[2] : null;
+            System.out.println("[MarketQuoteService] Resolved defaultExchange=" + defaultExchange + " defaultCurrency=" + defaultCurrency + " for " + cleanSymbol);
+
+            MarketQuoteDto quote = null;
+            Exception lastException = null;
+
+            // Try Twelve Data
+            if (isKeyValid(twelveDataApiKey)) {
+                System.out.println("[MarketQuoteService] Trying Twelve Data for " + cleanSymbol);
+                try {
+                    quote = fetchTwelveData(cleanSymbol, defaultExchange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("[MarketQuoteService] Twelve Data quote failed for " + cleanSymbol + ": " + e.getMessage());
+                }
+            } else {
+                System.err.println("[MarketQuoteService] Twelve Data API key is INVALID or EMPTY. Check application.properties!");
             }
-        }
 
-        // Try Alpha Vantage
-        if (quote == null && isKeyValid(alphaVantageApiKey)) {
-            try {
-                quote = fetchAlphaVantage(cleanSymbol, defaultExchange);
-            } catch (Exception e) {
-                System.err.println("Alpha Vantage quote failed for " + cleanSymbol + ": " + e.getMessage());
+            // Try Finnhub
+            if (quote == null && isKeyValid(finnhubApiKey)) {
+                try {
+                    quote = fetchFinnhub(cleanSymbol, defaultExchange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("Finnhub quote failed for " + cleanSymbol + ": " + e.getMessage());
+                }
             }
-        }
 
-        // 3. Fallback logic
-        if (quote != null) {
-            cache.put(cleanSymbol, new CachedQuote(quote));
-            return quote;
-        }
+            // Try Alpha Vantage
+            if (quote == null && isKeyValid(alphaVantageApiKey)) {
+                try {
+                    quote = fetchAlphaVantage(cleanSymbol, defaultExchange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("Alpha Vantage quote failed for " + cleanSymbol + ": " + e.getMessage());
+                }
+            }
 
-        // If rate limited or failed, return expired cached quote
-        if (cached != null) {
-            System.out.println("Returning expired cached quote for " + cleanSymbol + " due to API failure");
-            return cached.quote;
-        }
+            // 3. Fallback logic
+            if (quote != null) {
+                cache.put(cleanSymbol, new CachedQuote(quote));
+                return quote;
+            }
 
-        // Final fallback: generate a mock quote for the symbol
-        System.out.println("Generating fallback mock quote for " + cleanSymbol);
-        MarketQuoteDto mockQuote = generateMockQuote(cleanSymbol, defaultExchange, defaultCurrency);
-        cache.put(cleanSymbol, new CachedQuote(mockQuote));
-        return mockQuote;
+            // If rate limited or failed, return expired cached quote if we have one
+            if (cached != null) {
+                System.out.println("Returning expired cached quote for " + cleanSymbol + " due to API failure");
+                return cached.quote;
+            }
+
+            // Final fallback: generate a mock quote for the symbol
+            System.out.println("Generating fallback mock quote for " + cleanSymbol + " (Reason: " + (lastException != null ? lastException.getMessage() : "No active API keys") + ")");
+            MarketQuoteDto mockQuote = generateMockQuote(cleanSymbol, defaultExchange, defaultCurrency);
+            cache.put(cleanSymbol, new CachedQuote(mockQuote));
+            return mockQuote;
+        }
     }
 
     private boolean isKeyValid(String key) {
         return key != null && !key.trim().isEmpty() && !key.equalsIgnoreCase("YOUR_KEY");
     }
 
+    private boolean isNumeric(String str) {
+        if (str == null || str.trim().isEmpty() || str.equalsIgnoreCase("N/A") || str.equalsIgnoreCase("null")) {
+            return false;
+        }
+        try {
+            new BigDecimal(str.trim());
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
     private MarketQuoteDto fetchTwelveData(String symbol, String exchange) throws Exception {
         String url = "https://api.twelvedata.com/quote?symbol=" + symbol;
-        if (exchange != null && !exchange.isEmpty()) {
+        // Only append exchange if it's not a common US exchange to avoid mismatches
+        if (exchange != null && !exchange.isEmpty() && !exchange.equalsIgnoreCase("NASDAQ") && !exchange.equalsIgnoreCase("NYSE")) {
             url += "&exchange=" + exchange;
         }
         url += "&apikey=" + twelveDataApiKey;
 
+        System.out.println("[MarketQuoteService] Calling Twelve Data URL: " + url);
         String response = restTemplate.getForObject(url, String.class);
+        System.out.println("[MarketQuoteService] Twelve Data raw response for " + symbol + ": " + response);
+
         JsonNode root = mapper.readTree(response);
 
         if (root.has("status") && root.get("status").asText().equals("error")) {
-            throw new MarketDataException("Twelve Data error: " + root.get("message").asText());
+            String msg = root.has("message") ? root.get("message").asText() : "Unknown error";
+            throw new MarketDataException("Twelve Data error: " + msg);
         }
 
-        if (!root.has("price")) {
-            throw new MarketDataException("Twelve Data invalid response");
+        // Twelve Data returns "N/A" for close when market is closed or symbol not found.
+        // Try close first, then previous_close, then open as fallback for current price.
+        String closeTxt = root.has("close") && !root.get("close").isNull() ? root.get("close").asText() : null;
+        String prevCloseTxt = root.has("previous_close") && !root.get("previous_close").isNull() ? root.get("previous_close").asText() : null;
+        String openTxt = root.has("open") && !root.get("open").isNull() ? root.get("open").asText() : null;
+
+        String priceSource;
+        if (isNumeric(closeTxt)) {
+            priceSource = closeTxt;
+        } else if (isNumeric(prevCloseTxt)) {
+            System.out.println("[MarketQuoteService] close is N/A for " + symbol + ", using previous_close=" + prevCloseTxt);
+            priceSource = prevCloseTxt;
+        } else if (isNumeric(openTxt)) {
+            System.out.println("[MarketQuoteService] close is N/A for " + symbol + ", using open=" + openTxt);
+            priceSource = openTxt;
+        } else {
+            throw new MarketDataException("Twelve Data invalid response: no usable price field for " + symbol + " (close=" + closeTxt + ", prev=" + prevCloseTxt + ", open=" + openTxt + ")");
         }
 
-        String name = root.has("name") ? root.get("name").asText() : symbol;
-        String resolvedExchange = root.has("exchange") ? root.get("exchange").asText() : (exchange != null ? exchange : "US");
-        String currency = root.has("currency") ? root.get("currency").asText() : (resolvedExchange.equalsIgnoreCase("NSE") ? "INR" : "USD");
+        String name = root.has("name") && !root.get("name").isNull() ? root.get("name").asText() : symbol;
+        String resolvedExchange = root.has("exchange") && !root.get("exchange").isNull() ? root.get("exchange").asText() : (exchange != null ? exchange : "US");
+        String currency = root.has("currency") && !root.get("currency").isNull() ? root.get("currency").asText() : (resolvedExchange.equalsIgnoreCase("NSE") ? "INR" : "USD");
 
-        BigDecimal currentPrice = new BigDecimal(root.get("price").asText()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal open = new BigDecimal(root.get("open").asText()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal high = new BigDecimal(root.get("high").asText()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal low = new BigDecimal(root.get("low").asText()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal previousClose = new BigDecimal(root.get("previous_close").asText()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal change = new BigDecimal(root.get("change").asText()).setScale(2, RoundingMode.HALF_UP);
-        BigDecimal changePercent = new BigDecimal(root.get("percent_change").asText()).setScale(2, RoundingMode.HALF_UP);
-        Long volume = root.has("volume") ? Long.parseLong(root.get("volume").asText()) : 0L;
-        Long timestamp = root.has("timestamp") ? root.get("timestamp").asLong() * 1000 : System.currentTimeMillis();
+        BigDecimal currentPrice = new BigDecimal(priceSource).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal open = isNumeric(openTxt) ? new BigDecimal(openTxt).setScale(2, RoundingMode.HALF_UP) : currentPrice;
+        String highTxt = root.has("high") && !root.get("high").isNull() ? root.get("high").asText() : null;
+        String lowTxt = root.has("low") && !root.get("low").isNull() ? root.get("low").asText() : null;
+        BigDecimal high = isNumeric(highTxt) ? new BigDecimal(highTxt).setScale(2, RoundingMode.HALF_UP) : currentPrice;
+        BigDecimal low = isNumeric(lowTxt) ? new BigDecimal(lowTxt).setScale(2, RoundingMode.HALF_UP) : currentPrice;
+        BigDecimal previousClose = isNumeric(prevCloseTxt) ? new BigDecimal(prevCloseTxt).setScale(2, RoundingMode.HALF_UP) : currentPrice;
 
+        String changeTxt = root.has("change") && !root.get("change").isNull() ? root.get("change").asText() : null;
+        String pctTxt = root.has("percent_change") && !root.get("percent_change").isNull() ? root.get("percent_change").asText() : null;
+        BigDecimal change = isNumeric(changeTxt) ? new BigDecimal(changeTxt).setScale(2, RoundingMode.HALF_UP) : currentPrice.subtract(previousClose).setScale(2, RoundingMode.HALF_UP);
+        BigDecimal changePercent = isNumeric(pctTxt) ? new BigDecimal(pctTxt).setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO;
+
+        String volumeTxt = root.has("volume") && !root.get("volume").isNull() ? root.get("volume").asText() : null;
+        Long volume = isNumeric(volumeTxt) ? Long.parseLong(volumeTxt.trim()) : 0L;
+        Long timestamp = root.has("timestamp") && !root.get("timestamp").isNull() ? root.get("timestamp").asLong() * 1000 : System.currentTimeMillis();
+
+        System.out.println("[MarketQuoteService] Twelve Data SUCCESS for " + symbol + ": price=" + currentPrice + " exchange=" + resolvedExchange + " currency=" + currency);
         return new MarketQuoteDto(symbol, name, resolvedExchange, currency, currentPrice, open, high, low, previousClose, change, changePercent, volume, timestamp);
     }
 

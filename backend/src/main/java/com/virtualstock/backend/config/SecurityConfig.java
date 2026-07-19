@@ -32,10 +32,15 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/users/register", "/api/users/login", "/error").permitAll()
-                        .anyRequest().authenticated()
-                )
+               .authorizeHttpRequests(auth -> auth
+        .requestMatchers(
+                "/api/users/register",
+                "/api/users/login",
+                "/api/market/**",
+                "/error"
+        ).permitAll()
+        .anyRequest().authenticated()
+        )
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

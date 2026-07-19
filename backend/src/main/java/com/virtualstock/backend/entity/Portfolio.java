@@ -1,5 +1,6 @@
 package com.virtualstock.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -74,6 +75,7 @@ public class Portfolio {
         this.id = id;
     }
 
+    @JsonIgnore
     public User getUser() {
         return user;
     }

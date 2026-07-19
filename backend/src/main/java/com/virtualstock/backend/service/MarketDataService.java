@@ -37,6 +37,37 @@ public class MarketDataService {
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper mapper = new ObjectMapper();
 
+    private static class CachedHistory {
+        final MarketHistoryDto history;
+        final long timestamp;
+
+        CachedHistory(MarketHistoryDto history) {
+            this.history = history;
+            this.timestamp = System.currentTimeMillis();
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - this.timestamp > 300000; // 5 minutes
+        }
+    }
+
+    private static class CachedProfile {
+        final CompanyProfileDto profile;
+        final long timestamp;
+
+        CachedProfile(CompanyProfileDto profile) {
+            this.profile = profile;
+            this.timestamp = System.currentTimeMillis();
+        }
+
+        boolean isExpired() {
+            return System.currentTimeMillis() - this.timestamp > 600000; // 10 minutes
+        }
+    }
+
+    private final java.util.concurrent.ConcurrentHashMap<String, CachedHistory> historyCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, CachedProfile> profileCache = new java.util.concurrent.ConcurrentHashMap<>();
+
     public BigDecimal getCurrentPrice(String symbol, BigDecimal fallbackPrice) {
         return marketQuoteService.getCurrentPrice(symbol, fallbackPrice);
     }
@@ -59,51 +90,83 @@ public class MarketDataService {
         }
 
         String cleanSymbol = symbol.trim().toUpperCase();
-        String[] mockInfo = marketSearchService.getMockDetails(cleanSymbol);
-        String defaultExchange = mockInfo != null ? mockInfo[1] : null;
+        String cacheKey = cleanSymbol + "_" + (range != null ? range.toUpperCase() : "1M");
 
-        MarketHistoryDto history = null;
-
-        // Try Twelve Data
-        if (isKeyValid(twelveDataApiKey)) {
-            try {
-                if ("1M".equalsIgnoreCase(range) || range == null) {
-                    history = fetchHistoryTwelveData(cleanSymbol, defaultExchange);
-                }
-            } catch (Exception e) {
-                System.err.println("Twelve Data history failed: " + e.getMessage());
-            }
+        // 1. Check cache (lock-free read)
+        CachedHistory cached = historyCache.get(cacheKey);
+        if (cached != null && !cached.isExpired()) {
+            return cached.history;
         }
 
-        // Try Finnhub
-        if (history == null && isKeyValid(finnhubApiKey)) {
-            try {
-                if ("1M".equalsIgnoreCase(range) || range == null) {
+        // Deduplicate concurrent history requests for the same symbol/range
+        synchronized (cacheKey.intern()) {
+            // Recheck cache inside lock
+            cached = historyCache.get(cacheKey);
+            if (cached != null && !cached.isExpired()) {
+                return cached.history;
+            }
+
+            String[] mockInfo = marketSearchService.getMockDetails(cleanSymbol);
+            String defaultExchange = mockInfo != null ? mockInfo[1] : null;
+
+            MarketHistoryDto history = null;
+            Exception lastException = null;
+
+            String effectiveRange = (range != null && !range.trim().isEmpty()) ? range.toUpperCase() : "1M";
+
+            // Try Twelve Data for ALL ranges
+            if (isKeyValid(twelveDataApiKey)) {
+                System.out.println("[MarketDataService] Trying Twelve Data history for " + cleanSymbol + " range=" + effectiveRange);
+                try {
+                    history = fetchHistoryTwelveData(cleanSymbol, defaultExchange, effectiveRange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("[MarketDataService] Twelve Data history failed for " + cleanSymbol + " range=" + effectiveRange + ": " + e.getMessage());
+                }
+            } else {
+                System.err.println("[MarketDataService] Twelve Data API key INVALID - skipping for history");
+            }
+
+            // Try Finnhub (only for 1M range as it uses unix timestamp ranges)
+            if (history == null && isKeyValid(finnhubApiKey) && ("1M".equalsIgnoreCase(effectiveRange) || "1W".equalsIgnoreCase(effectiveRange))) {
+                System.out.println("[MarketDataService] Trying Finnhub history for " + cleanSymbol + " range=" + effectiveRange);
+                try {
                     history = fetchHistoryFinnhub(cleanSymbol, defaultExchange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("[MarketDataService] Finnhub history failed for " + cleanSymbol + ": " + e.getMessage());
                 }
-            } catch (Exception e) {
-                System.err.println("Finnhub history failed: " + e.getMessage());
             }
-        }
 
-        // Try Alpha Vantage
-        if (history == null && isKeyValid(alphaVantageApiKey)) {
-            try {
-                if ("1M".equalsIgnoreCase(range) || range == null) {
+            // Try Alpha Vantage for daily data
+            if (history == null && isKeyValid(alphaVantageApiKey)) {
+                System.out.println("[MarketDataService] Trying Alpha Vantage history for " + cleanSymbol);
+                try {
                     history = fetchHistoryAlphaVantage(cleanSymbol, defaultExchange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("[MarketDataService] Alpha Vantage history failed for " + cleanSymbol + ": " + e.getMessage());
                 }
-            } catch (Exception e) {
-                System.err.println("Alpha Vantage history failed: " + e.getMessage());
             }
-        }
 
-        if (history != null) {
-            return history;
-        }
+            if (history != null) {
+                System.out.println("[MarketDataService] History SUCCESS for " + cleanSymbol + " range=" + effectiveRange + " with " + history.getHistory().size() + " points");
+                historyCache.put(cacheKey, new CachedHistory(history));
+                return history;
+            }
 
-        // Fallback: Generate mock history
-        System.out.println("Generating fallback mock history for " + cleanSymbol + " with range " + range);
-        return generateMockHistory(cleanSymbol, range);
+            // If failed, try to return expired cached history
+            if (cached != null) {
+                System.out.println("[MarketDataService] Returning expired cached history for " + cleanSymbol + " due to API failure");
+                return cached.history;
+            }
+
+            // Fallback: Generate mock history
+            System.out.println("[MarketDataService] Generating fallback mock history for " + cleanSymbol + " range=" + effectiveRange + " (Reason: " + (lastException != null ? lastException.getMessage() : "No active API keys") + ")");
+            MarketHistoryDto mockHistory = generateMockHistory(cleanSymbol, range);
+            historyCache.put(cacheKey, new CachedHistory(mockHistory));
+            return mockHistory;
+        }
     }
 
     public CompanyProfileDto getCompanyProfile(String symbol) {
@@ -112,46 +175,76 @@ public class MarketDataService {
         }
 
         String cleanSymbol = symbol.trim().toUpperCase();
-        String[] mockInfo = marketSearchService.getMockDetails(cleanSymbol);
-        String defaultExchange = mockInfo != null ? mockInfo[1] : null;
-        String defaultCurrency = mockInfo != null ? mockInfo[2] : null;
 
-        CompanyProfileDto profile = null;
+        // 1. Check cache (lock-free read)
+        CachedProfile cached = profileCache.get(cleanSymbol);
+        if (cached != null && !cached.isExpired()) {
+            return cached.profile;
+        }
 
-        // Try Twelve Data Profile
-        if (isKeyValid(twelveDataApiKey)) {
-            try {
-                profile = fetchProfileTwelveData(cleanSymbol);
-            } catch (Exception e) {
-                System.err.println("Twelve Data profile failed for " + cleanSymbol + ": " + e.getMessage());
+        // Deduplicate concurrent profile requests for the same symbol
+        synchronized (cleanSymbol.intern()) {
+            // Recheck cache inside lock
+            cached = profileCache.get(cleanSymbol);
+            if (cached != null && !cached.isExpired()) {
+                return cached.profile;
             }
-        }
 
-        // Try Finnhub Profile
-        if (profile == null && isKeyValid(finnhubApiKey)) {
-            try {
-                profile = fetchProfileFinnhub(cleanSymbol, defaultExchange);
-            } catch (Exception e) {
-                System.err.println("Finnhub profile failed for " + cleanSymbol + ": " + e.getMessage());
+            String[] mockInfo = marketSearchService.getMockDetails(cleanSymbol);
+            String defaultExchange = mockInfo != null ? mockInfo[1] : null;
+            String defaultCurrency = mockInfo != null ? mockInfo[2] : null;
+
+            CompanyProfileDto profile = null;
+            Exception lastException = null;
+
+            // Try Twelve Data Profile
+            if (isKeyValid(twelveDataApiKey)) {
+                try {
+                    profile = fetchProfileTwelveData(cleanSymbol);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("Twelve Data profile failed for " + cleanSymbol + ": " + e.getMessage());
+                }
             }
-        }
 
-        // Try Alpha Vantage Profile
-        if (profile == null && isKeyValid(alphaVantageApiKey)) {
-            try {
-                profile = fetchProfileAlphaVantage(cleanSymbol, defaultExchange);
-            } catch (Exception e) {
-                System.err.println("Alpha Vantage profile failed for " + cleanSymbol + ": " + e.getMessage());
+            // Try Finnhub Profile
+            if (profile == null && isKeyValid(finnhubApiKey)) {
+                try {
+                    profile = fetchProfileFinnhub(cleanSymbol, defaultExchange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("Finnhub profile failed for " + cleanSymbol + ": " + e.getMessage());
+                }
             }
-        }
 
-        if (profile != null) {
-            return enrichProfile(profile);
-        }
+            // Try Alpha Vantage Profile
+            if (profile == null && isKeyValid(alphaVantageApiKey)) {
+                try {
+                    profile = fetchProfileAlphaVantage(cleanSymbol, defaultExchange);
+                } catch (Exception e) {
+                    lastException = e;
+                    System.err.println("Alpha Vantage profile failed for " + cleanSymbol + ": " + e.getMessage());
+                }
+            }
 
-        // Fallback: generate mock profile
-        System.out.println("Generating fallback mock profile for " + cleanSymbol);
-        return generateMockProfile(cleanSymbol, defaultExchange, defaultCurrency);
+            if (profile != null) {
+                CompanyProfileDto enriched = enrichProfile(profile);
+                profileCache.put(cleanSymbol, new CachedProfile(enriched));
+                return enriched;
+            }
+
+            // If failed, try to return expired cached profile
+            if (cached != null) {
+                System.out.println("Returning expired cached profile for " + cleanSymbol + " due to API failure");
+                return cached.profile;
+            }
+
+            // Fallback: generate mock profile
+            System.out.println("Generating fallback mock profile for " + cleanSymbol + " (Reason: " + (lastException != null ? lastException.getMessage() : "No active API keys") + ")");
+            CompanyProfileDto mockProfile = generateMockProfile(cleanSymbol, defaultExchange, defaultCurrency);
+            profileCache.put(cleanSymbol, new CachedProfile(mockProfile));
+            return mockProfile;
+        }
     }
 
     private CompanyProfileDto enrichProfile(CompanyProfileDto profile) {
@@ -177,34 +270,105 @@ public class MarketDataService {
     }
 
     // History API Calls
-    private MarketHistoryDto fetchHistoryTwelveData(String symbol, String exchange) throws Exception {
+    private MarketHistoryDto fetchHistoryTwelveData(String symbol, String exchange, String range) throws Exception {
+        // Map frontend range to Twelve Data API interval and outputsize
+        String interval;
+        int outputsize;
+        switch (range.toUpperCase()) {
+            case "1D":
+                interval = "5min";
+                outputsize = 78; // ~78 5-min bars in a trading day
+                break;
+            case "1W":
+                interval = "1h";
+                outputsize = 40;
+                break;
+            case "3M":
+                interval = "1day";
+                outputsize = 90;
+                break;
+            case "6M":
+                interval = "1day";
+                outputsize = 180;
+                break;
+            case "1Y":
+                interval = "1day";
+                outputsize = 365;
+                break;
+            case "1M":
+            default:
+                interval = "1day";
+                outputsize = 30;
+                break;
+        }
+
         String url = "https://api.twelvedata.com/time_series?symbol=" + symbol;
-        if (exchange != null && !exchange.isEmpty()) {
+        // Only append exchange if non-US to avoid mismatches
+        if (exchange != null && !exchange.isEmpty() && !exchange.equalsIgnoreCase("NASDAQ") && !exchange.equalsIgnoreCase("NYSE")) {
             url += "&exchange=" + exchange;
         }
-        url += "&interval=1day&outputsize=30&apikey=" + twelveDataApiKey;
+        url += "&interval=" + interval + "&outputsize=" + outputsize + "&apikey=" + twelveDataApiKey;
 
+        System.out.println("[MarketDataService] Calling Twelve Data time_series URL: " + url);
         String response = restTemplate.getForObject(url, String.class);
+        System.out.println("[MarketDataService] Twelve Data time_series response for " + symbol + ": " + (response != null && response.length() > 200 ? response.substring(0, 200) + "..." : response));
+
         JsonNode root = mapper.readTree(response);
 
         if (root.has("status") && root.get("status").asText().equals("error")) {
-            throw new MarketDataException("Twelve Data history error: " + root.get("message").asText());
+            String msg = root.has("message") ? root.get("message").asText() : "Unknown error";
+            throw new MarketDataException("Twelve Data history error: " + msg);
+        }
+
+        if (!root.has("values") || !root.get("values").isArray() || root.get("values").size() == 0) {
+            throw new MarketDataException("Twelve Data history: no 'values' array in response for " + symbol);
         }
 
         List<MarketHistoryDto.HistoryPoint> points = new ArrayList<>();
-        if (root.has("values") && root.get("values").isArray()) {
-            for (JsonNode item : root.get("values")) {
-                String date = item.get("datetime").asText();
-                BigDecimal open = new BigDecimal(item.get("open").asText()).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal high = new BigDecimal(item.get("high").asText()).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal low = new BigDecimal(item.get("low").asText()).setScale(2, RoundingMode.HALF_UP);
-                BigDecimal close = new BigDecimal(item.get("close").asText()).setScale(2, RoundingMode.HALF_UP);
-                Long volume = item.has("volume") ? Long.parseLong(item.get("volume").asText()) : 0L;
-                points.add(new MarketHistoryDto.HistoryPoint(date, open, high, low, close, volume));
+        for (JsonNode item : root.get("values")) {
+            if (item.has("datetime") && item.has("close") && !item.get("close").isNull()) {
+                String closeTxt = item.get("close").asText();
+                if (closeTxt == null || closeTxt.equalsIgnoreCase("N/A") || closeTxt.trim().isEmpty()) {
+                    continue; // skip invalid data points
+                }
+                try {
+                    String date = item.get("datetime").asText();
+                    BigDecimal close = new BigDecimal(closeTxt).setScale(2, RoundingMode.HALF_UP);
+                    String openTxt = item.has("open") && !item.get("open").isNull() ? item.get("open").asText() : null;
+                    String highTxt = item.has("high") && !item.get("high").isNull() ? item.get("high").asText() : null;
+                    String lowTxt = item.has("low") && !item.get("low").isNull() ? item.get("low").asText() : null;
+                    String volTxt = item.has("volume") && !item.get("volume").isNull() ? item.get("volume").asText() : null;
+                    BigDecimal open = isNumericStr(openTxt) ? new BigDecimal(openTxt).setScale(2, RoundingMode.HALF_UP) : close;
+                    BigDecimal high = isNumericStr(highTxt) ? new BigDecimal(highTxt).setScale(2, RoundingMode.HALF_UP) : close;
+                    BigDecimal low = isNumericStr(lowTxt) ? new BigDecimal(lowTxt).setScale(2, RoundingMode.HALF_UP) : close;
+                    Long volume = isNumericStr(volTxt) ? Long.parseLong(volTxt.trim()) : 0L;
+                    points.add(new MarketHistoryDto.HistoryPoint(date, open, high, low, close, volume));
+                } catch (NumberFormatException e) {
+                    System.err.println("[MarketDataService] Skipping data point with unparseable value: " + item);
+                }
             }
         }
 
+        if (points.isEmpty()) {
+            throw new MarketDataException("Twelve Data history: all data points were invalid for " + symbol);
+        }
+
+        // Twelve Data returns newest-first; reverse to get chronological order for charts
+        java.util.Collections.reverse(points);
+        System.out.println("[MarketDataService] Twelve Data history SUCCESS for " + symbol + ": " + points.size() + " points");
         return new MarketHistoryDto(symbol, points);
+    }
+
+    private boolean isNumericStr(String str) {
+        if (str == null || str.trim().isEmpty() || str.equalsIgnoreCase("N/A") || str.equalsIgnoreCase("null")) {
+            return false;
+        }
+        try {
+            new BigDecimal(str.trim());
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     private MarketHistoryDto fetchHistoryFinnhub(String symbol, String exchange) throws Exception {

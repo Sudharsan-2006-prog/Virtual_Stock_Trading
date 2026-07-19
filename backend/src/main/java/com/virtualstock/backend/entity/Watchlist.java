@@ -1,5 +1,6 @@
 package com.virtualstock.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 
@@ -47,6 +48,7 @@ public class Watchlist {
         this.id = id;
     }
 
+    @JsonIgnore
     public User getUser() {
         return user;
     }

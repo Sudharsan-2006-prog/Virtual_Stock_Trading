@@ -1,5 +1,6 @@
 package com.virtualstock.backend.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
@@ -17,10 +18,19 @@ public class User {
     @Column(unique = true)
     private String email;
 
+    @JsonIgnore
     private String password;
 
-    @Column(precision = 15, scale = 2)
+    @Column(precision = 15, scale = 2, columnDefinition = "NUMERIC(15,2) DEFAULT 100000.00")
     private BigDecimal walletBalance;
+
+    @PostLoad
+    protected void onLoad() {
+        // Auto-initialize null wallet balances loaded from legacy DB rows
+        if (walletBalance == null) {
+            walletBalance = new BigDecimal("100000.00");
+        }
+    }
 
     public User() {
     }
@@ -49,6 +59,7 @@ public class User {
         this.email = email;
     }
 
+    @JsonIgnore
     public String getPassword() {
         return password;
     }
